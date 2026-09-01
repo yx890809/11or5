@@ -1,5 +1,6 @@
 // 参数调节面板
-import { SlidersHorizontal } from "lucide-react";
+import { useState } from "react";
+import { SlidersHorizontal, ChevronDown, ChevronUp } from "lucide-react";
 import type { AnalyzerOptions } from "@/types";
 import { useLotteryStore } from "@/store";
 
@@ -13,17 +14,20 @@ const WEIGHT_LABELS: { key: keyof AnalyzerOptions["weights"]; label: string }[] 
   { key: "sum", label: "和值法" },
 ];
 
-export default function ParamPanel() {
+export default function ParamPanel({ defaultCollapsed = false }: { defaultCollapsed?: boolean }) {
   const options = useLotteryStore((s) => s.options);
   const setWindow = useLotteryStore((s) => s.setWindow);
   const setWeight = useLotteryStore((s) => s.setWeight);
   const setOptions = useLotteryStore((s) => s.setOptions);
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
 
   return (
     <div className="panel">
-      <div className="panel-header">
+      <div className="panel-header cursor-pointer select-none" onClick={() => setCollapsed(!collapsed)}>
         <SlidersHorizontal className="h-4 w-4 text-gold-400" /> 参数调节
+        {collapsed ? <ChevronDown className="h-4 w-4 text-slate-500 ml-auto" /> : <ChevronUp className="h-4 w-4 text-slate-500 ml-auto" />}
       </div>
+      {!collapsed && (
       <div className="space-y-4 p-4">
         {/* 共识门槛（杀号数量固定2个） */}
         <div>
@@ -92,6 +96,7 @@ export default function ParamPanel() {
           ))}
         </div>
       </div>
+      )}
     </div>
   );
 }

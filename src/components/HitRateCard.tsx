@@ -5,12 +5,12 @@ import { useLotteryStore } from "@/store";
 import { computeHitRate, autoAdjustWeights, backtestPerMethod } from "@/lib/analyzer";
 import { METHOD_LIST } from "@/types";
 
-export default function HitRateCard() {
+export default function HitRateCard({ defaultCollapsed = true }: { defaultCollapsed?: boolean }) {
   const predictionHistory = useLotteryStore((s) => s.predictionHistory);
   const records = useLotteryStore((s) => s.records);
   const options = useLotteryStore((s) => s.options);
   const setOptions = useLotteryStore((s) => s.setOptions);
-  const [collapsed, setCollapsed] = useState(true);
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
 
   const stats = useMemo(() => computeHitRate(predictionHistory), [predictionHistory]);
 

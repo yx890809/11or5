@@ -7,6 +7,7 @@ import { computeStats, recommend, autoAdjustWeights, backtestAndOptimize } from 
 import type { BacktestResult } from "@/lib/analyzer";
 import { METHOD_LIST } from "@/types";
 import KillCard from "@/components/KillCard";
+import BetSlipCard from "@/components/BetSlipCard";
 import QuickAddCard from "@/components/QuickAddCard";
 import HitRateCard from "@/components/HitRateCard";
 import FreqChart from "@/components/FreqChart";
@@ -211,10 +212,10 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      {/* 1. 顶部：杀号推荐卡 + 命中率卡 并排 */}
+      {/* 1. 顶部：杀号推荐卡 + 投注号码卡 并排 */}
       <div className="mb-4 grid grid-cols-1 gap-6 xl:grid-cols-[2fr_1fr]">
         <KillCard recommendation={recommendation} stats={stats} records={records} />
-        <HitRateCard />
+        <BetSlipCard killNumbers={recommendation.killNumbers} />
       </div>
 
       {/* 2. 快速追加：独立长条形，恢复原位 */}
@@ -308,8 +309,11 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* 参数调节（右） */}
-        <ParamPanel />
+        {/* 参数调节（右） — 叠加命中率卡 */}
+        <div className="space-y-6">
+          <ParamPanel defaultCollapsed />
+          <HitRateCard defaultCollapsed />
+        </div>
       </div>
 
       {/* 4. 底部：冷热图 + 预测历史 + 遗漏表 + 方法说明 */}
