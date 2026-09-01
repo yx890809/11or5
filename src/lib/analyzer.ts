@@ -423,10 +423,21 @@ export function scoreNumbers(
     }
     const acScore = Math.round(acRaw * 100 * 0.1);
 
-    // 12. 尾数冷杀法（连续 5 期以上没出的尾数 → 杀该尾数号）
+    // 12. 尾数法（改方向：杀近期出过的热尾数，因为温号容易延续；极端冷尾反而在回补）
     let tailRaw = 0;
-    if (coldTails.includes(s.num % 10)) {
-      tailRaw = 0.6;
+    // 近3期都出过的尾数 → 该尾数号可能热完转冷，杀
+    const recent3TailFreq = {};
+    for (let i = sorted.length - 1; i >= Math.max(0, sorted.length - 3); i--) {
+      for (const n of sanitizeNumbers(sorted[i].numbers)) {
+        const t = n % 10;
+        recent3TailFreq[t] = (recent3TailFreq[t] || 0) + 1;
+      }
+    }
+    const hotTails = Object.entries(recent3TailFreq as Record<string, number>)
+      .filter(([, v]) => v >= 3) // 近3期每期都出的尾数
+      .map(([k]) => parseInt(k));
+    if (hotTails.includes(s.num % 10)) {
+      tailRaw = 0.7;
       methods.push("尾数法");
     }
     const tailScore = Math.round(tailRaw * 100 * 0.1);
