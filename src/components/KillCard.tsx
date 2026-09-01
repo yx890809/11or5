@@ -2,6 +2,7 @@
 import { Crosshair, Flame, Snowflake, TrendingUp, BarChart3 } from "lucide-react";
 import { useMemo } from "react";
 import type { KillRecommendation, NumberStat, AnalyzerOptions, LotteryRecord } from "@/types";
+import { METHOD_LIST } from "@/types";
 import { quickBacktest } from "@/lib/analyzer";
 import Ball from "./Ball";
 
@@ -56,7 +57,7 @@ export default function KillCard({ recommendation, stats, options, records }: Pr
         </span>
         <div className="flex items-center gap-2 text-xs text-slate-500">
           <span className="flex items-center gap-1 text-gold-300">
-            <TrendingUp className="h-3 w-3" /> 共识 {maxConsensus}/7 法
+            <TrendingUp className="h-3 w-3" /> 共识 {maxConsensus}/{METHOD_LIST.length} 法
           </span>
           <span className="text-slate-600">|</span>
           <span>理论 {(killSuccessRate(killNumbers.length))}%</span>
