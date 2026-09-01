@@ -58,6 +58,10 @@ export interface KillRecommendation {
 export interface AnalyzerOptions {
   /** 统计窗口期数 */
   window: number;
+  /** 杀号数量 1-3（默认1个，命中率翻倍：杀1个理论55% vs 杀2个理论27%） */
+  killCount: number;
+  /** 最少需要几种方法同时指向才杀（共识门槛 1-7，默认3） */
+  consensusMin: number;
   /** 各方法权重 0-1 */
   weights: {
     hotCold: number;

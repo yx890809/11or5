@@ -13,6 +13,8 @@ import type {
 
 export const DEFAULT_OPTIONS: AnalyzerOptions = {
   window: 30,
+  killCount: 1,        // 默认只杀1个号（理论正确率55%，比杀2个的27%高一倍）
+  consensusMin: 3,     // 至少3种方法同时指向才杀（宁缺毋滥）
   weights: {
     hotCold: 0.25,
     limit: 0.15,
@@ -29,6 +31,8 @@ function normalizeOptions(opts?: Partial<AnalyzerOptions>): AnalyzerOptions {
   if (!opts) return { ...DEFAULT_OPTIONS };
   return {
     window: opts.window ?? DEFAULT_OPTIONS.window,
+    killCount: opts.killCount ?? DEFAULT_OPTIONS.killCount,
+    consensusMin: opts.consensusMin ?? DEFAULT_OPTIONS.consensusMin,
     weights: {
       ...DEFAULT_OPTIONS.weights,
       ...(opts.weights ?? {}),
@@ -269,50 +273,47 @@ export function scoreNumbers(
 }
 
 /**
- * 推荐 2 个杀号
- * 优先保证"一热一冷"组合，提升稳健性
+ * 推荐杀号
+ * 核心策略：共识投票制 — 只有 ≥ consensusMin 种方法同时认为该杀才入选
+ * 这样选出的杀号置信度高，而不是各种方法各杀各的互相矛盾
+ * @param killCount 杀号数量（1-3）
+ * @param consensusMin 最少需要几种方法达成共识（2-5）
  */
 export function recommend(
   records: LotteryRecord[],
   options: AnalyzerOptions = DEFAULT_OPTIONS,
 ): KillRecommendation {
   options = normalizeOptions(options);
+  const killCount = Math.max(1, Math.min(3, options.killCount));
+  const consensusMin = Math.max(1, Math.min(7, options.consensusMin));
+
   const { stats, details } = scoreNumbers(records, options);
-  const byScore = [...details].sort((a, b) => b.score - a.score);
 
-  const kill: ScoreDetail[] = [];
-  if (byScore.length === 0) {
-    return { killNumbers: [], details };
+  // 共识投票：按"方法命中数"降序，再按"加权分"降序
+  const byConsensus = [...details].sort((a, b) => {
+    if (b.methods.length !== a.methods.length) return b.methods.length - a.methods.length;
+    return b.score - a.score;
+  });
+
+  // 筛选出达到共识门槛的号码
+  let qualified = byConsensus.filter((d) => d.methods.length >= consensusMin);
+
+  // 如果没有号码达到门槛，降级用最低门槛（至少2种方法）保证能给出建议
+  if (qualified.length === 0) {
+    qualified = byConsensus.filter((d) => d.methods.length >= 2);
   }
-  // 第一名直接入选
-  kill.push(byScore[0]);
 
-  // 找一个与第一名互补的（若第一名偏热，则补一个偏冷的；反之亦然）
-  const firstStat = stats.find((s) => s.num === kill[0].num)!;
-  const firstIsHot = firstStat && firstStat.freqRate >= 0.4;
-  const candidates = byScore.filter((d) => d.num !== kill[0].num);
-  let second: ScoreDetail | undefined;
-  if (firstIsHot) {
-    // 偏热 → 补偏冷（遗漏最大者）
-    second = [...candidates].sort((a, b) => {
-      const oa = stats.find((s) => s.num === a.num)!.currentOmit;
-      const ob = stats.find((s) => s.num === b.num)!.currentOmit;
-      // 综合遗漏与得分
-      return ob * 10 + b.score - (oa * 10 + a.score);
-    })[0];
+  // 还是没有，就退到按加权分排序取前 killCount 个
+  let kill: ScoreDetail[];
+  if (qualified.length > 0) {
+    kill = qualified.slice(0, killCount);
   } else {
-    // 偏冷 → 补偏热（频次最高者）
-    second = [...candidates].sort((a, b) => {
-      const fa = stats.find((s) => s.num === a.num)!.freq;
-      const fb = stats.find((s) => s.num === b.num)!.freq;
-      return fb * 10 + b.score - (fa * 10 + a.score);
-    })[0];
+    kill = byConsensus.slice(0, killCount);
   }
-  if (second) kill.push(second);
 
   return {
     killNumbers: kill.map((k) => k.num),
-    details: byScore,
+    details: byConsensus,
   };
 }
 
