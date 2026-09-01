@@ -1,9 +1,10 @@
 // 分析看板页
 import { useMemo, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { TrendingUp, Database, Sparkles, Cpu } from "lucide-react";
+import { TrendingUp, Database, Sparkles, Cpu, RefreshCw } from "lucide-react";
 import { useLotteryStore } from "@/store";
 import { computeStats, recommend, autoAdjustWeights, backtestAndOptimize } from "@/lib/analyzer";
+import { fetchBuiltin } from "@/lib/api";
 import type { BacktestResult } from "@/lib/analyzer";
 import { METHOD_LIST } from "@/types";
 import KillCard from "@/components/KillCard";
@@ -39,12 +40,17 @@ export default function DashboardPage() {
   const predictionHistory = useLotteryStore((s) => s.predictionHistory);
   const setOptions = useLotteryStore((s) => s.setOptions);
   const clearRecords = useLotteryStore((s) => s.clearRecords);
+  const appendRecord = useLotteryStore((s) => s.appendRecord);
 
   // AI 进化状态
   const [aiRunning, setAiRunning] = useState(false);
   const [aiProgress, setAiProgress] = useState(0);
   const [aiResult, setAiResult] = useState<BacktestResult | null>(null);
   const [aiError, setAiError] = useState("");
+
+  // 内置拉取状态
+  const [fetchLoading, setFetchLoading] = useState(false);
+  const [fetchMsg, setFetchMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
   const runAiOptimize = () => {
     if (records.length < 15) {
@@ -71,6 +77,39 @@ export default function DashboardPage() {
         setAiRunning(false);
       }
     }, 50);
+  };
+
+  /** 一键拉取内置开奖源（江西11选5） */
+  const fetchLatest = async () => {
+    setFetchLoading(true);
+    setFetchMsg(null);
+    try {
+      const res = await fetchBuiltin("jx11x5");
+      if (!res.ok || !res.data) {
+        setFetchMsg({ type: "err", text: res.error || "拉取失败" });
+        return;
+      }
+      const existingIssues = new Set(records.map((r) => r.issue));
+      let newCount = 0;
+      for (const rec of res.data) {
+        if (!existingIssues.has(rec.issue)) {
+          appendRecord({ issue: rec.issue, numbers: rec.numbers });
+          newCount++;
+        }
+      }
+      // 拉到的数据是倒序（最新在前），appendRecord 内部 sortRecords 会自动排序
+      if (newCount === 0) {
+        setFetchMsg({ type: "ok", text: `已是最新（${res.data.length} 条全部已存在）` });
+      } else {
+        setFetchMsg({ type: "ok", text: `新增 ${newCount} 条开奖数据，共 ${records.length + newCount} 条` });
+      }
+    } catch (e) {
+      setFetchMsg({ type: "err", text: (e as Error).message || "未知错误" });
+    } finally {
+      setFetchLoading(false);
+      // 3 秒后自动清除提示
+      setTimeout(() => setFetchMsg(null), 3000);
+    }
   };
 
   // 自动 AI 进化：每次有新开奖数据来了，静默后台跑一次回测调权重
@@ -184,11 +223,25 @@ export default function DashboardPage() {
         </div>
         <h2 className="font-display text-xl font-bold text-slate-200">暂无开奖数据</h2>
         <p className="mt-2 max-w-sm text-sm text-slate-500">
-          请先在数据接入页输入外部开奖数据链接，或手动录入历史号码后再来查看杀号分析
+          点下面的按钮直接从内置开奖源拉取最新数据，或手动录入历史号码
         </p>
-        <button className="btn-gold mt-6" onClick={() => navigate("/")}>
-          <Database className="h-4 w-4" /> 去接入数据
-        </button>
+        <div className="mt-6 flex items-center gap-3">
+          <button className="btn-gold" onClick={fetchLatest} disabled={fetchLoading}>
+            <RefreshCw className={`mr-2 h-4 w-4 ${fetchLoading ? "animate-spin" : ""}`} />
+            {fetchLoading ? "拉取中..." : "一键拉取最新开奖"}
+          </button>
+          <button
+            className="btn-outline"
+            onClick={() => navigate("/")}
+          >
+            <Database className="mr-2 h-4 w-4" /> 手动录入
+          </button>
+        </div>
+        {fetchMsg && (
+          <p className={`mt-4 text-xs font-mono ${fetchMsg.type === "ok" ? "text-green-400" : "text-kill"}`}>
+            {fetchMsg.text}
+          </p>
+        )}
       </div>
     );
   }
@@ -207,9 +260,33 @@ export default function DashboardPage() {
             最新一期 <span className="font-mono text-cyan-400">{latest?.issue}</span> · 共 {records.length} 条记录
           </p>
         </div>
-        <div className="flex items-center gap-2 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2 text-xs text-slate-400">
-          <TrendingUp className="h-4 w-4 text-warm" />
-          统计窗口 {options.window} 期
+        <div className="flex items-center gap-2">
+          {/* 一键拉取最新开奖 */}
+          <button
+            className="btn-gold inline-flex items-center gap-1.5 text-xs"
+            onClick={fetchLatest}
+            disabled={fetchLoading}
+            title="从江西11选5自动拉取最新开奖数据"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${fetchLoading ? "animate-spin" : ""}`} />
+            {fetchLoading ? "拉取中..." : "一键拉取最新开奖"}
+          </button>
+
+          {/* 提示消息 */}
+          {fetchMsg && (
+            <span
+              className={`text-xs font-mono ${
+                fetchMsg.type === "ok" ? "text-green-400" : "text-kill"
+              }`}
+            >
+              {fetchMsg.text}
+            </span>
+          )}
+
+          <div className="flex items-center gap-2 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2 text-xs text-slate-400">
+            <TrendingUp className="h-4 w-4 text-warm" />
+            统计窗口 {options.window} 期
+          </div>
         </div>
       </header>
 

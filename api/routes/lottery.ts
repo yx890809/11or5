@@ -185,4 +185,100 @@ router.post("/parse", (req: Request, res: Response): void => {
   }
 });
 
+/**
+ * GET /api/lottery/builtin
+ * 内置开奖源：江西11选5（全国联网）
+ * 硬编码目标 jxlottery.vip 的真实 AJAX API，后端代理绕过 CORS
+ */
+const BUILTIN_SOURCES: Record<string, { url: string; label: string }> = {
+  jx11x5: {
+    url: "https://www.jxlottery.vip/api/game-lottery/list-lottery-open-code-history?lottery=jx11x5&page=0&size=50",
+    label: "江西11选5",
+  },
+};
+
+router.get("/builtin", async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  const source = (req.query.source as string) || "jx11x5";
+  const cfg = BUILTIN_SOURCES[source];
+  if (!cfg) {
+    res.status(400).json({ success: false, error: `未知数据源: ${source}` });
+    return;
+  }
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+
+    const fetchResp = await fetch(cfg.url, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (LotteryAnalyzer/2.0)",
+        Accept: "application/json, text/plain, */*",
+      },
+      redirect: "follow",
+    });
+    clearTimeout(timer);
+
+    if (!fetchResp.ok) {
+      res.status(502).json({
+        success: false,
+        error: `数据源返回 HTTP ${fetchResp.status}`,
+      });
+      return;
+    }
+
+    const raw = await fetchResp.text();
+    const json = JSON.parse(raw);
+
+    // jxlottery.vip 结构: { error: 0, data: { list: [...], totalNum } }
+    const list: Array<{ issue: string; openCode: string; openTime?: string }> =
+      json?.data?.list ?? [];
+
+    const records: (LotteryRecord & { openTime?: string })[] = [];
+    const seenIssues = new Set<string>();
+
+    for (const item of list) {
+      if (!item?.issue || !item?.openCode) continue;
+      if (seenIssues.has(item.issue)) continue;
+      seenIssues.add(item.issue);
+
+      // openCode 格式: "04,09,08,10,06"
+      const numbers = sanitizeNumbers(
+        item.openCode.split(",").map((s) => Number(s.trim())),
+      );
+      if (numbers.length >= 2) {
+        records.push({
+          issue: item.issue,
+          numbers,
+          openTime: item.openTime,
+        });
+      }
+    }
+
+    if (records.length === 0) {
+      res.status(200).json({
+        success: false,
+        error: "数据源解析成功但未找到有效开奖记录",
+        raw: raw.slice(0, 500),
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      data: records,
+      totalNum: json?.data?.totalNum ?? records.length,
+      source: cfg.label,
+    });
+  } catch (e) {
+    const msg = (e as Error).message;
+    if (msg?.includes("aborted")) {
+      res.status(504).json({ success: false, error: "数据源请求超时（15s）" });
+      return;
+    }
+    next(e);
+  }
+});
+
 export default router;

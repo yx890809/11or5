@@ -49,6 +49,20 @@ async function directFetch(url: string, format: DataFormat): Promise<FetchResult
   }
 }
 
+/** 内置开奖源拉取（江西11选5，后端代理到 jxlottery.vip） */
+export async function fetchBuiltin(source: string = "jx11x5"): Promise<FetchResult> {
+  try {
+    const resp = await fetch(`${BASE}/lottery/builtin?source=${encodeURIComponent(source)}`);
+    const json = await resp.json();
+    if (!resp.ok || !json.success) {
+      return { ok: false, error: json?.error || `HTTP ${resp.status}` };
+    }
+    return { ok: true, data: json.data };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message || "拉取内置数据源失败" };
+  }
+}
+
 /** 解析原始文本 - 智能回退 */
 export function parseRaw(raw: string, format: DataFormat): LotteryRecord[] {
   try {
