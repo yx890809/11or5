@@ -2,16 +2,37 @@
 import { useMemo, useState } from "react";
 import { Target, TrendingUp, TrendingDown, RefreshCw, CheckCircle, XCircle, ChevronDown, ChevronUp } from "lucide-react";
 import { useLotteryStore } from "@/store";
-import { computeHitRate, autoAdjustWeights } from "@/lib/analyzer";
+import { computeHitRate, autoAdjustWeights, backtestPerMethod } from "@/lib/analyzer";
 import { METHOD_LIST } from "@/types";
 
 export default function HitRateCard() {
   const predictionHistory = useLotteryStore((s) => s.predictionHistory);
+  const records = useLotteryStore((s) => s.records);
   const options = useLotteryStore((s) => s.options);
   const setOptions = useLotteryStore((s) => s.setOptions);
   const [collapsed, setCollapsed] = useState(true);
 
   const stats = useMemo(() => computeHitRate(predictionHistory), [predictionHistory]);
+
+  // 实时回测兜底数据 — 给每个方法算独立命中率
+  const btPerMethod = useMemo(() => backtestPerMethod(records, 20, 2), [records]);
+
+  // 合并：历史记录有数据的用历史，没有的用回测
+  const mergedPerMethod = useMemo(() => {
+    const merged: Record<string, { hit: number; total: number; rate: number; source: "history" | "backtest" }> = {};
+    for (const meta of METHOD_LIST) {
+      const hist = stats.perMethod[meta.name];
+      const bt = btPerMethod[meta.name];
+      if (hist && hist.total > 0) {
+        merged[meta.name] = { ...hist, source: "history" };
+      } else if (bt && bt.total > 0) {
+        merged[meta.name] = { ...bt, source: "backtest" };
+      } else {
+        merged[meta.name] = { hit: 0, total: 0, rate: 0, source: "backtest" };
+      }
+    }
+    return merged;
+  }, [stats.perMethod, btPerMethod]);
 
   const latestVerified = useMemo(
     () => [...predictionHistory].reverse().find((p) => p.hit !== undefined),
@@ -139,8 +160,8 @@ export default function HitRateCard() {
             <div className="mb-2 text-xs text-slate-500">各方法命中率</div>
             <div className="space-y-1.5">
               {METHOD_LIST.map((meta) => {
-                const m = stats.perMethod[meta.name] ?? { hit: 0, total: 0, rate: 0 };
-                const rate = m.total > 0 ? m.rate : 0;
+                const m = mergedPerMethod[meta.name] ?? { hit: 0, total: 0, rate: 0, source: "backtest" as const };
+                const rate = m.rate;
                 const barColor =
                   rate >= 0.65
                     ? "bg-green-400"
@@ -153,8 +174,8 @@ export default function HitRateCard() {
                   <div key={meta.key} className="flex items-center gap-2 text-xs" title={meta.desc}>
                     <span className="w-16 shrink-0 text-slate-300">
                       {meta.name}
-                      {m.total === 0 && (
-                        <span className="ml-1 text-[9px] text-slate-600">未触发</span>
+                      {m.source === "backtest" && (
+                        <span className="ml-1 text-[9px] text-slate-600">回测</span>
                       )}
                     </span>
                     <div className="flex-1 rounded bg-white/5">

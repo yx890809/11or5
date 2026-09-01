@@ -10,6 +10,7 @@ import type {
   DanScoreDetail,
   DanRecommendation,
 } from "@/types";
+import { METHOD_LIST } from "@/types";
 
 export const DEFAULT_OPTIONS: AnalyzerOptions = {
   window: 30,
@@ -836,6 +837,56 @@ export function computeHitRate(history: PredictionHistoryItem[]): HitRateStats {
   }
 
   return { overallHitRate, totalVerified, perMethod, recentHitRate, recentCount };
+}
+
+/**
+ * 实时回测每种杀号方法的独立命中率
+ * 模拟"只用该方法独立杀 2 个号"，跑最近 20 期
+ * 返回每个方法 {hit, total, rate}
+ * 这样即使历史预测记录里没数据（新方法），也能有真实回测数据展示
+ */
+export function backtestPerMethod(
+  records: LotteryRecord[],
+  testCount = 20,
+  killCount = 2,
+): Record<string, { hit: number; total: number; rate: number }> {
+  const sorted = sortRecords(records);
+  const MIN_TRAIN = 15;
+  const perMethod: Record<string, { hit: number; total: number; rate: number }> = {};
+
+  // 初始化所有方法（从 METHOD_LIST 导入）
+  for (const meta of METHOD_LIST) {
+    perMethod[meta.name] = { hit: 0, total: 0, rate: 0 };
+  }
+
+  const total = Math.min(testCount, Math.max(0, sorted.length - MIN_TRAIN));
+
+  for (let i = sorted.length - total; i < sorted.length; i++) {
+    const train = sorted.slice(0, i);
+    const testRecord = sorted[i];
+    if (train.length < MIN_TRAIN) continue;
+    const actual = testRecord.numbers;
+
+    // 用默认配置跑 recommend
+    const rec = recommend(train, DEFAULT_OPTIONS);
+    for (const d of rec.details) {
+      // 这个号被杀了，检查是哪些方法杀的
+      const isKilled = rec.killNumbers.includes(d.num);
+      for (const methodName of d.methods) {
+        if (!perMethod[methodName]) perMethod[methodName] = { hit: 0, total: 0, rate: 0 };
+        perMethod[methodName].total++;
+        if (isKilled && !actual.includes(d.num)) {
+          // 被杀且确实没出 → 命中
+          perMethod[methodName].hit++;
+        }
+      }
+    }
+  }
+
+  for (const k of Object.keys(perMethod)) {
+    perMethod[k].rate = perMethod[k].total > 0 ? perMethod[k].hit / perMethod[k].total : 0;
+  }
+  return perMethod;
 }
 
 /** 根据各方法命中率自动微调权重 - 命中率梯度式调整 */
