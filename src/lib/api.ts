@@ -49,12 +49,22 @@ async function directFetch(url: string, format: DataFormat): Promise<FetchResult
   }
 }
 
-/** 解析原始文本 */
+/** 解析原始文本 - 智能回退 */
 export function parseRaw(raw: string, format: DataFormat): LotteryRecord[] {
   try {
-    if (format === "json") return parseJson(raw);
+    if (format === "json") {
+      const result = parseJson(raw);
+      if (result.length > 0) return result;
+      // JSON 失败或解析到空数组 → 自动回退文本解析
+      return parseText(raw);
+    }
     return parseText(raw);
   } catch {
-    return [];
+    // JSON 解析抛异常 → 回退文本
+    try {
+      return parseText(raw);
+    } catch {
+      return [];
+    }
   }
 }

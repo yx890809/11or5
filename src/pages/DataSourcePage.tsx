@@ -26,6 +26,13 @@ export default function DataSourcePage() {
   const [imgRaw, setImgRaw] = useState("");
   const [preview, setPreview] = useState<LotteryRecord[]>([]);
 
+  // 切换 tab 时自动设置合适的默认格式
+  const switchTab = (t: Tab) => {
+    setTab(t);
+    if (t === "manual") setFormat("text");
+    else if (t === "url") setFormat("json");
+  };
+
   const handleFetch = async (src?: { url: string; format: DataFormat }) => {
     const targetUrl = src?.url ?? url;
     const targetFmt = src?.format ?? format;
@@ -49,7 +56,10 @@ export default function DataSourcePage() {
     setError("");
     const data = parseRaw(raw, format);
     if (data.length === 0) {
-      setError("解析到0条记录，请检查格式（每行：期号 号1,号2,号3,号4,号5）");
+      setError(
+        "解析到 0 条记录。请确认每行包含「期号（6位+）+ 5个1-11的号码」，支持空格/逗号分隔。\n" +
+          "示例：020047 1 5 2 2 6  或  20260901-002 03,07,08,01,05",
+      );
       return;
     }
     setPreview(data);
@@ -94,7 +104,7 @@ export default function DataSourcePage() {
       {/* 方式切换 */}
       <div className="mb-4 flex gap-2">
         <button
-          onClick={() => setTab("url")}
+          onClick={() => switchTab("url")}
           className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition ${
             tab === "url"
               ? "bg-gold-400/15 text-gold-300 ring-1 ring-gold-400/40"
@@ -104,7 +114,7 @@ export default function DataSourcePage() {
           <Link2 className="h-4 w-4" /> 外部链接
         </button>
         <button
-          onClick={() => setTab("manual")}
+          onClick={() => switchTab("manual")}
           className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition ${
             tab === "manual"
               ? "bg-gold-400/15 text-gold-300 ring-1 ring-gold-400/40"
@@ -114,7 +124,7 @@ export default function DataSourcePage() {
           <ClipboardPaste className="h-4 w-4" /> 手动录入
         </button>
         <button
-          onClick={() => setTab("img")}
+          onClick={() => switchTab("img")}
           className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition ${
             tab === "img"
               ? "bg-gold-400/15 text-gold-300 ring-1 ring-gold-400/40"
@@ -177,7 +187,12 @@ export default function DataSourcePage() {
           <div className="space-y-3 p-4">
             <textarea
               className="input-field min-h-[160px] font-mono text-xs leading-relaxed"
-              placeholder={"20260901001 03,07,08,01,05\n20260901002 02,09,11,04,06"}
+              placeholder={
+                "020047  1  5  2  2  6\n" +
+                "020046  7  5  4  1  6\n" +
+                "020045  7  2  3  3  8\n" +
+                "…（每行：期号 + 空格 + 5个号码，支持多种分隔符）"
+              }
               value={raw}
               onChange={(e) => setRaw(e.target.value)}
             />
