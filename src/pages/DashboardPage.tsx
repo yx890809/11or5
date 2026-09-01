@@ -38,6 +38,7 @@ export default function DashboardPage() {
   const savePrediction = useLotteryStore((s) => s.savePrediction);
   const predictionHistory = useLotteryStore((s) => s.predictionHistory);
   const setOptions = useLotteryStore((s) => s.setOptions);
+  const clearRecords = useLotteryStore((s) => s.clearRecords);
 
   // AI 进化状态
   const [aiRunning, setAiRunning] = useState(false);
@@ -230,6 +231,7 @@ export default function DashboardPage() {
           records={records}
           stats={stats}
           killNumbers={recommendation.killNumbers}
+          onClear={clearRecords}
         />
 
         {/* AI 策略进化（中） */}
