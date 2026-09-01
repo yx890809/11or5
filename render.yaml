@@ -1,0 +1,19 @@
+# Render 部署蓝图
+# 一键部署：Render 会自动读取此文件配置服务
+services:
+  - type: web
+    name: 11选5杀号分析
+    runtime: node
+    plan: free
+    # 构建：先 Vite 打包前端到 dist/
+    buildCommand: npm install && npm run build
+    # 启动：Express 同时 serve 静态文件 + /api 代理
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+    # 健康检查
+    healthCheckPath: /api/health
+    # 自动部署：push 到 main 分支后自动构建
+    autoDeploy: true
+    branch: main
