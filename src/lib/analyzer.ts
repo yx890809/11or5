@@ -176,6 +176,91 @@ export function scoreNumbers(
         ? "low"
         : "none";
 
+  // ═══════════════════════════════════════════
+  // 新增全局统计指标（用于 8-12 种杀号方法）
+  // ═══════════════════════════════════════════
+
+  // 近 5 期奇偶比/大小比/质合比/012路 统计
+  const recent5 = sorted.slice(-5);
+  const oddCount = recent5.map((r) => sanitizeNumbers(r.numbers).filter((n) => n % 2 === 1).length);
+  const bigCount = recent5.map((r) => sanitizeNumbers(r.numbers).filter((n) => n >= 6).length);
+  // 质数: 2,3,5,7,11；合数: 1,4,6,8,9,10
+  const primes = new Set([2, 3, 5, 7, 11]);
+  const primeCount = recent5.map((r) => sanitizeNumbers(r.numbers).filter((n) => primes.has(n)).length);
+  // 0路:3,6,9；1路:1,4,7,10；2路:2,5,8,11
+  const road0Count = recent5.map((r) => sanitizeNumbers(r.numbers).filter((n) => n % 3 === 0).length);
+  const road1Count = recent5.map((r) => sanitizeNumbers(r.numbers).filter((n) => n % 3 === 1).length);
+  const road2Count = recent5.map((r) => sanitizeNumbers(r.numbers).filter((n) => n % 3 === 2).length);
+
+  // 奇偶/大小/质合 是否连 3 期偏某方向
+  const oddHeavy = oddCount.slice(-3).every((c) => c >= 4); // 连 3 期奇数≥4 个
+  const evenHeavy = oddCount.slice(-3).every((c) => c <= 2); // 连 3 期奇数≤2 个 → 偶偏多
+  const bigHeavy = bigCount.slice(-3).every((c) => c >= 4);
+  const smallHeavy = bigCount.slice(-3).every((c) => c <= 2);
+  const primeHeavy = primeCount.slice(-3).every((c) => c >= 4);
+  const compositeHeavy = primeCount.slice(-3).every((c) => c <= 2);
+
+  // 012路哪路过热（近 5 期该路号平均出现次数 ÷ 期数 > 理论值）
+  // 0路理论: 5 × (3/11) ≈ 1.36；1路/2路: 5 × (4/11) ≈ 1.82
+  const road0Hot = road0Count.reduce((a, b) => a + b, 0) / 5 >= 2;
+  const road1Hot = road1Count.reduce((a, b) => a + b, 0) / 5 >= 2.5;
+  const road2Hot = road2Count.reduce((a, b) => a + b, 0) / 5 >= 2.5;
+
+  // 跨度统计（近 5 期跨度大小）
+  const spans = recent5
+    .filter((r) => sanitizeNumbers(r.numbers).length >= 2)
+    .map((r) => {
+      const nums = sanitizeNumbers(r.numbers);
+      return Math.max(...nums) - Math.min(...nums);
+    });
+  const spanSmall = spans.length >= 3 && spans.slice(-3).every((s) => s <= 6);
+  const spanBig = spans.length >= 3 && spans.slice(-3).every((s) => s >= 9);
+
+  // 尾数冷热统计（近 10 期哪些尾数没出）
+  const tailWindow = sorted.slice(-10);
+  const tailLastSeen: Record<number, number> = {}; // 每个尾数最后出现距今多少期
+  for (let t = 0; t <= 9; t++) tailLastSeen[t] = 999;
+  for (let i = sorted.length - 1; i >= Math.max(0, sorted.length - 20); i--) {
+    const nums = sanitizeNumbers(sorted[i].numbers);
+    for (const n of nums) {
+      const t = n % 10;
+      if (tailLastSeen[t] === 999) {
+        tailLastSeen[t] = sorted.length - 1 - i;
+      }
+    }
+  }
+  // 冷尾：连续 5 期以上没出的尾数
+  const coldTails = Object.entries(tailLastSeen)
+    .filter(([, v]) => v >= 5)
+    .map(([k]) => parseInt(k));
+
+  // AC 值贡献：11 个号各自对"组合复杂度"的贡献
+  // 思路：把某号加入组合后，不同两两差值的数量增量就是它的贡献
+  // 贡献低的号（加上后差值不增加）→ 不太可能出 → 杀
+  function calcACContrib(num: number, allNums: number[]): number {
+    const withNum = [...allNums, num].sort((a, b) => a - b);
+    const diffs = new Set<number>();
+    for (let i = 0; i < withNum.length; i++) {
+      for (let j = i + 1; j < withNum.length; j++) {
+        diffs.add(Math.abs(withNum[j] - withNum[i]));
+      }
+    }
+    return diffs.size;
+  }
+  // 假设从 11 个号中选 5 个，计算每个号在"加入上期前 4 个号"时的 AC 贡献
+  const baselineNums = lastNums.slice(0, 4);
+  const acScores: Record<number, number> = {};
+  for (let n = 1; n <= 11; n++) {
+    if (!lastNums.includes(n)) {
+      acScores[n] = calcACContrib(n, baselineNums);
+    }
+  }
+  // 贡献最低的 3 个号有资格被杀
+  const acLowKillable = Object.entries(acScores)
+    .sort((a, b) => a[1] - b[1])
+    .slice(0, 3)
+    .map(([k]) => parseInt(k));
+
   const details: ScoreDetail[] = stats.map((s) => {
     const methods: string[] = [];
 
@@ -270,7 +355,73 @@ export function scoreNumbers(
     }
     const sumScore = Math.round(sumRaw * 100 * options.weights.sum);
 
-    let score = coldScore + limitScore + headTailScore + omitScore + repeatScore + neighborScore + sumScore;
+    // 8. 奇偶/大小/质合反向杀法（均值回归：连 3 期偏某方向 → 反向杀）
+    let parityRaw = 0;
+    if (oddHeavy && s.num % 2 === 1) {
+      parityRaw = 0.9;
+      methods.push("奇偶法");
+    } else if (evenHeavy && s.num % 2 === 0) {
+      parityRaw = 0.9;
+      methods.push("奇偶法");
+    } else if (bigHeavy && s.num >= 6) {
+      parityRaw = 0.7;
+      methods.push("大小法");
+    } else if (smallHeavy && s.num <= 5) {
+      parityRaw = 0.7;
+      methods.push("大小法");
+    } else if (primeHeavy && primes.has(s.num)) {
+      parityRaw = 0.6;
+      methods.push("质合法");
+    } else if (compositeHeavy && !primes.has(s.num)) {
+      parityRaw = 0.6;
+      methods.push("质合法");
+    }
+    const parityScore = Math.round(parityRaw * 100 * 0.15);
+
+    // 9. 012路过热杀法（某路近期远超理论值 → 杀该路号）
+    let roadRaw = 0;
+    if (road0Hot && s.num % 3 === 0) {
+      roadRaw = 0.8;
+      methods.push("012路法");
+    } else if (road1Hot && s.num % 3 === 1) {
+      roadRaw = 0.8;
+      methods.push("012路法");
+    } else if (road2Hot && s.num % 3 === 2) {
+      roadRaw = 0.8;
+      methods.push("012路法");
+    }
+    const roadScore = Math.round(roadRaw * 100 * 0.12);
+
+    // 10. 跨度方向杀法（连续小跨度 → 杀大号；连续大跨度 → 杀小号）
+    let spanRaw = 0;
+    if (spanSmall && s.num >= 8) {
+      spanRaw = 0.8;
+      methods.push("跨度法");
+    } else if (spanBig && s.num <= 4) {
+      spanRaw = 0.8;
+      methods.push("跨度法");
+    }
+    const spanScore = Math.round(spanRaw * 100 * 0.12);
+
+    // 11. AC值贡献杀法（对组合复杂度贡献最低的号 → 杀）
+    let acRaw = 0;
+    if (acLowKillable.includes(s.num)) {
+      acRaw = 0.7;
+      methods.push("AC值法");
+    }
+    const acScore = Math.round(acRaw * 100 * 0.1);
+
+    // 12. 尾数冷杀法（连续 5 期以上没出的尾数 → 杀该尾数号）
+    let tailRaw = 0;
+    if (coldTails.includes(s.num % 10)) {
+      tailRaw = 0.6;
+      methods.push("尾数法");
+    }
+    const tailScore = Math.round(tailRaw * 100 * 0.1);
+
+    let score = coldScore + limitScore + headTailScore + omitScore + repeatScore
+              + neighborScore + sumScore + parityScore + roadScore
+              + spanScore + acScore + tailScore;
 
     // ⚠️ 重号保护：上期出现的号码，被杀概率砍半
     if (lastNums.includes(s.num)) {
