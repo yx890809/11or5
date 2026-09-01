@@ -41,7 +41,7 @@ export const DEFAULT_OPTIONS: AnalyzerOptions = {
  *        （但算法方向大改时需要强制刷新某些字段，比如 repeat 权重从 0→0.20）
  */
 function normalizeOptions(opts?: Partial<AnalyzerOptions>): AnalyzerOptions {
-  if (!opts) return { ...DEFAULT_OPTIONS };
+  if (!opts) return { ...DEFAULT_OPTIONS, omitTiers: { ...DEFAULT_OMIT_TIERS } };
   return {
     window: opts.window ?? DEFAULT_OPTIONS.window,
     killCount: opts.killCount ?? DEFAULT_OPTIONS.killCount,
@@ -52,11 +52,11 @@ function normalizeOptions(opts?: Partial<AnalyzerOptions>): AnalyzerOptions {
       limit: opts.weights?.limit ?? DEFAULT_OPTIONS.weights.limit,
       headTail: opts.weights?.headTail ?? DEFAULT_OPTIONS.weights.headTail,
       omit: opts.weights?.omit ?? DEFAULT_OPTIONS.weights.omit,
-      repeat: DEFAULT_OPTIONS.weights.repeat, // ⚠️ 强制刷新：算法方向大改，用新默认值
+      repeat: DEFAULT_OPTIONS.weights.repeat, // ⚠️ 强制刷新
       neighbor: opts.weights?.neighbor ?? DEFAULT_OPTIONS.weights.neighbor,
       sum: opts.weights?.sum ?? DEFAULT_OPTIONS.weights.sum,
     },
-    omitTiers: opts.omitTiers ?? DEFAULT_OMIT_TIERS,
+    omitTiers: { ...DEFAULT_OMIT_TIERS }, // ⚠️ 强制刷新：防止 localStorage 旧值污染
   };
 }
 
@@ -526,7 +526,8 @@ export function recommend(
   const tier1: number[] = [];
   const tier2: number[] = [];
   const tier3: number[] = [];
-  const tier4: number[] = [];
+  const tier4Safe: number[] = []; // tier4 里的安全号（非危险区间）
+  const tier4Risky: number[] = []; // tier4 里的危险号（o=1,2,3,>=8）— 只在 tier1-3 不够时兜底
   const [t1lo, t1hi] = tiers.tier1Range;
 
   for (let n = 1; n <= 11; n++) {
@@ -537,28 +538,45 @@ export function recommend(
       tier2.push(n);
     } else if (tiers.tier3KillOmit4 && o === 4) {
       tier3.push(n);
+    } else if (o !== 1 && o !== 2 && o !== 3 && o < 8) {
+      tier4Safe.push(n);
     } else {
-      // tier4Strict: 危险区间（o=1,2,3,>=8）的号也不要进 tier4
-      if (!tiers.tier4Strict || (o !== 1 && o !== 2 && o !== 3 && o < 8)) {
-        tier4.push(n);
-      }
+      tier4Risky.push(n); // 危险区间（o=1,2,3,>=8）
     }
   }
 
-  // tier4 里的按原共识排序兜底
+  // ══════════════════════════════════════════════════
+  // 同一 tier 内的号：用 scoreNumbers 的"方法命中数 + 分数"二级排序
+  // 这样 012路法、极限法、奇偶法等一旦触发，就能把号的优先级拉上去
+  // 即使这些方法触发频率低，一旦触发就是双保险（遗漏安全 + 多方法共识）
+  // ══════════════════════════════════════════════════
+  const sortByMethods = (nums: number[]) =>
+    nums.slice().sort((a, b) => {
+      const da = detailMap.get(a), db = detailMap.get(b);
+      if (!da || !db) return 0;
+      // 优先：被多少种方法同时指向（冷热/极限/012路/奇偶/邻号等）
+      if (db.methods.length !== da.methods.length) return db.methods.length - da.methods.length;
+      // 其次：加权分
+      return db.score - da.score;
+    });
+
+  const sorted1 = sortByMethods(tier1);
+  const sorted2 = sortByMethods(tier2);
+  const sorted3 = sortByMethods(tier3);
+  const sorted4safe = sortByMethods(tier4Safe);
+  // 危险号只挑那些被 ≥2 种方法同时命中的（双保险才敢杀）
+  const sorted4risky = sortByMethods(tier4Risky).filter((n) => {
+    const d = detailMap.get(n);
+    return d && d.methods.length >= 2;
+  });
+
+  // 按优先级拼起来：tier1 > tier2 > tier3 > tier4Safe > tier4Risky(≥2方法命中才要)
+  const kill: number[] = [...sorted1, ...sorted2, ...sorted3, ...sorted4safe, ...sorted4risky].slice(0, killCount);
+
   const byConsensus = [...details].sort((a, b) => {
     if (b.methods.length !== a.methods.length) return b.methods.length - a.methods.length;
     return b.score - a.score;
   });
-  const tier4sorted = tier4.sort((a, b) => {
-    const da = detailMap.get(a), db = detailMap.get(b);
-    if (!da || !db) return 0;
-    if (db.methods.length !== da.methods.length) return db.methods.length - da.methods.length;
-    return db.score - da.score;
-  });
-
-  // 按优先级拼起来取 killCount 个
-  const kill: number[] = [...tier1, ...tier2, ...tier3, ...tier4sorted].slice(0, killCount);
 
   // 合并 methods 展示（动态生成描述）
   const killDetails = kill.map((num) => {

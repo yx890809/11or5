@@ -46,6 +46,8 @@ function loadOptions(): AnalyzerOptions {
         ...DEFAULT_OPTIONS.weights,
         ...(parsed.weights ?? {}),
       },
+      // omitTiers 强制用最新默认（防止旧版本 AI 进化引擎写入错误配置）
+      omitTiers: DEFAULT_OPTIONS.omitTiers,
     };
   } catch {
     return { ...DEFAULT_OPTIONS };
