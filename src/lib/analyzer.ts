@@ -17,17 +17,20 @@ export const DEFAULT_OPTIONS: AnalyzerOptions = {
   killCount: 2,        // 固定杀2个号
   consensusMin: 2,     // 至少2种方法同时指向（门槛降低，因为有效方法少了）
   weights: {
-    hotCold: 0.30,     // 冷号（只杀极端冷，方向已修正）
+    hotCold: 0.30,     // 杀温冷号（遗漏4-9期）
     limit: 0.15,       // 刚开始冷的号
     headTail: 0.10,
-    omit: 0.20,        // 极端遗漏
-    repeat: 0.00,      // 废弃：重号不能杀，反向给惩罚分
+    omit: 0.20,        // 中等遗漏（4-6期）
+    repeat: 0.20,      // 重号反向：上期出现的号下期再出率仅31%，可以杀
     neighbor: 0.15,    // 孤立号
     sum: 0.10,
   },
 };
 
-/** 兜底：把传入的 options 补全为完整结构（防止旧版 localStorage 残缺字段） */
+/** 兜底：把传入的 options 补全为完整结构（防止旧版 localStorage 残缺字段）
+ *  策略：DEFAULT_OPTIONS 做基准，只补全新增字段，旧字段保留用户值
+ *        （但算法方向大改时需要强制刷新某些字段，比如 repeat 权重从 0→0.20）
+ */
 function normalizeOptions(opts?: Partial<AnalyzerOptions>): AnalyzerOptions {
   if (!opts) return { ...DEFAULT_OPTIONS };
   return {
@@ -35,8 +38,14 @@ function normalizeOptions(opts?: Partial<AnalyzerOptions>): AnalyzerOptions {
     killCount: opts.killCount ?? DEFAULT_OPTIONS.killCount,
     consensusMin: opts.consensusMin ?? DEFAULT_OPTIONS.consensusMin,
     weights: {
-      ...DEFAULT_OPTIONS.weights,
-      ...(opts.weights ?? {}),
+      ...opts.weights,                    // 用户存储的权重优先
+      hotCold: opts.weights?.hotCold ?? DEFAULT_OPTIONS.weights.hotCold,
+      limit: opts.weights?.limit ?? DEFAULT_OPTIONS.weights.limit,
+      headTail: opts.weights?.headTail ?? DEFAULT_OPTIONS.weights.headTail,
+      omit: opts.weights?.omit ?? DEFAULT_OPTIONS.weights.omit,
+      repeat: DEFAULT_OPTIONS.weights.repeat, // ⚠️ 强制刷新：算法方向大改，用新默认值
+      neighbor: opts.weights?.neighbor ?? DEFAULT_OPTIONS.weights.neighbor,
+      sum: opts.weights?.sum ?? DEFAULT_OPTIONS.weights.sum,
     },
   };
 }
@@ -266,29 +275,40 @@ export function scoreNumbers(
     const methods: string[] = [];
 
     // ═══════════════════════════════════════════
-    // 7 种杀号方法（方向已修正：只杀"下期不太可能出"的号）
-    // 每种方法覆盖 3-5 个号，让每个号能被 2-4 种方法同时命中
+    // 杀号方法（基于真实数据修正方向）
+    // 
+    // 数据发现（75期前向验证）:
+    //   1. 遗漏4-6期的号 → 下期出现率18.5% → 最安全！→ 杀
+    //   2. 遗漏2-3期的温号 → 下期出现率69.3% → 最危险！→ 不能杀
+    //   3. 上期出现的号 → 下期再出率31.1%（低于理论45.5%）→ 可以杀！
+    //   4. 遗漏10+期极端冷号 → 均值回归，反而容易回补 → 不能杀
     // ═══════════════════════════════════════════
 
-    // 1. 冷热法（只杀冷，不杀热！热号 75% 概率继续出）
-    // 门槛放宽到 60%（原来 75% 太严），覆盖 3-4 个冷号
-    const omitPart = s.currentOmit / Math.max(1, maxOmit);
+    // 1. 冷热法（杀"温冷号"：遗漏 4-9 期的号 — 既没到回补临界点，又不太可能刚出来）
+    // 数据显示遗漏2-3期的温号(69%)最容易出，遗漏4-6期(18.5%)最安全
     let coldRaw = 0;
-    if (omitPart >= 0.85) coldRaw = 1;
-    else if (omitPart >= 0.7) coldRaw = 0.7;
-    else if (omitPart >= 0.55) coldRaw = 0.4;
+    if (s.currentOmit >= 4 && s.currentOmit <= 9) {
+      // 最优杀号区间！遗漏4-9期
+      coldRaw = 1;
+      methods.push("冷热法");
+    } else if (s.currentOmit === 1 || s.currentOmit === 2) {
+      // 刚断(1-2期)的号也不太容易马上再出
+      coldRaw = 0.5;
+    }
     const coldScore = Math.round(coldRaw * 100 * options.weights.hotCold);
-    if (coldRaw >= 0.4) methods.push("冷热法");
 
-    // 2. 极限法（杀"刚断连开+遗漏≤4期"的号 — 热完变冷中）
+    // 2. 极限法（杀"持续温冷"：遗漏 5-9 期，且不是极端冷号）
     let limitRaw = 0;
-    if (s.consecutive === 0 && s.currentOmit >= 1 && s.currentOmit <= 4) {
-      limitRaw = s.currentOmit <= 2 ? 0.8 : 0.5;
+    if (s.currentOmit >= 5 && s.currentOmit <= 9 && s.currentOmit < maxOmit) {
+      limitRaw = 0.9;
       methods.push("极限法");
+    } else if (s.currentOmit === 1 && s.consecutive === 0) {
+      // 刚断1期（上期之前连开过？不，consecutive=0表示连开0期）
+      limitRaw = 0.3;
     }
     const limitScore = Math.round(limitRaw * 100 * options.weights.limit);
 
-    // 3. 首尾差法（上期首尾球相减 → 杀这个数 — 形态逻辑）
+    // 3. 首尾差法（形态逻辑，保留）
     let htRaw = 0;
     if (headTailActive && s.num === headTailDiff) {
       htRaw = 1;
@@ -296,38 +316,29 @@ export function scoreNumbers(
     }
     const headTailScore = Math.round(htRaw * 100 * options.weights.headTail);
 
-    // 4. 遗漏值法（当前遗漏排名靠前列的号）
-    // 门槛放宽到 0.7（原来 0.9 几乎只有 1 个号），覆盖 3-4 个
+    // 4. 遗漏值法（中等遗漏最安全 → 杀遗漏 4-6 期）
     let omitRaw = 0;
-    if (s.maxOmit > 0 && s.currentOmit >= s.maxOmit * 0.85) {
+    if (s.currentOmit >= 4 && s.currentOmit <= 6) {
       omitRaw = 1;
       methods.push("遗漏法");
-    } else if (s.maxOmit > 0 && s.currentOmit >= s.maxOmit * 0.7) {
+    } else if (s.currentOmit >= 7 && s.currentOmit <= 9) {
       omitRaw = 0.6;
       methods.push("遗漏法");
-    } else if (s.maxOmit > 0 && s.currentOmit >= s.maxOmit * 0.55) {
-      omitRaw = 0.3;
     }
     const omitScore = Math.round(omitRaw * 100 * options.weights.omit);
 
-    // 5. 重号反向排除（原来的重号杀号完全反了！现在改成：
-    //    上期 5 个号有 75% 概率继续出，所以"不在上期开奖里"的 6 个号中排遗漏靠前者 → 杀）
-    //    注意：不是真的"重号法"，而是"非重号反向杀"
+    // 5. 重号反向修正（数据显示上期号下期再出率仅31%，低于理论45.5%！
+    //    → 上期出现的号反而可以杀！）
     let repeatRaw = 0;
-    if (!lastNums.includes(s.num)) {
-      // 不在上期 → 有资格被杀
-      // 在非重号中，遗漏值越高越冷越可能继续不出
-      const nonRepeatOmitRank = stats
-        .filter((x) => !lastNums.includes(x.num))
-        .sort((a, b) => b.currentOmit - a.currentOmit)
-        .findIndex((x) => x.num === s.num);
-      if (nonRepeatOmitRank >= 0 && nonRepeatOmitRank <= 2) {
-        // 非重号中遗漏排名前 3
-        repeatRaw = nonRepeatOmitRank === 0 ? 0.9 : nonRepeatOmitRank === 1 ? 0.6 : 0.4;
-        methods.push("重号排除法");
-      }
+    if (lastNums.includes(s.num)) {
+      // 上期出现的号 → 下期不太容易再出（真实数据31% vs 理论45.5%）
+      repeatRaw = 0.8;
+      methods.push("重号排除法");
+    } else if (s.currentOmit >= 4 && s.currentOmit <= 6) {
+      // 非上期号但处于安全遗漏区间
+      repeatRaw = 0.5;
     }
-    const repeatScore = Math.round(repeatRaw * 100 * 0.15); // 用固定权重 0.15，不依赖 options.weights.repeat（已废弃）
+    const repeatScore = Math.round(repeatRaw * 100 * options.weights.repeat);
 
     // 6. 邻号远离法（门槛从 minDist≥3 降到 ≥2，覆盖更多孤立号）
     let neighborRaw = 0;
@@ -424,9 +435,10 @@ export function scoreNumbers(
               + neighborScore + sumScore + parityScore + roadScore
               + spanScore + acScore + tailScore;
 
-    // ⚠️ 重号保护：上期出现的号码，被杀概率砍半
+    // ⚠️ 重号加分：上期出现的号码，下期再出率仅31%（低于理论45.5%）
+    // 所以上期号应该被杀概率增加，加分20%
     if (lastNums.includes(s.num)) {
-      score = Math.round(score * 0.3);
+      score = Math.round(score * 1.2);
     }
 
     return {
