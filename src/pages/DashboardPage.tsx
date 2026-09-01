@@ -188,27 +188,117 @@ export default function DashboardPage() {
       </header>
 
       {/* 杀号推荐卡 + 命中率卡 并排 */}
-      <div className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-[2fr_1fr]">
+      <div className="mb-4 grid grid-cols-1 gap-6 xl:grid-cols-[2fr_1fr]">
         <KillCard recommendation={recommendation} stats={stats} />
         <HitRateCard />
       </div>
 
-      {/* 快速追加最新一期 */}
-      <div className="mb-6">
+      {/* 中间填充区：快速追加 + 历史开奖 并排 */}
+      <div className="mb-4 grid grid-cols-1 gap-6 xl:grid-cols-[1fr_2fr]">
+        {/* 左：快速追加 */}
         <QuickAddCard latestIssue={latest?.issue} />
+
+        {/* 右：历史开奖（移上来填空白） */}
+        <HistoryTable
+          records={records}
+          stats={stats}
+          killNumbers={recommendation.killNumbers}
+        />
       </div>
 
       {/* 主体网格 */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        {/* 左中：统计图表 + 历史开奖 */}
+        {/* 左中：统计图表 + 预测历史 */}
         <div className="space-y-6 lg:col-span-2 order-2 lg:order-1">
           <FreqChart stats={stats} />
-          <HistoryTable
-            records={records}
-            stats={stats}
-            killNumbers={recommendation.killNumbers}
-          />
-          {/* 移动端：OmitTable 放这里（紧跟历史开奖）*/}
+
+          {/* 预测历史 */}
+          {predictionHistory.length > 0 ? (
+            <div className="panel">
+              <div className="panel-header">
+                预测历史（最近 {Math.min(predictionHistory.length, 50)} 条，共 {predictionHistory.length} 条）
+              </div>
+
+              {/* 桌面端：表格 */}
+              <div className="hidden md:block max-h-[480px] overflow-y-auto">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-void-950 text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-normal">目标期号</th>
+                      <th className="px-3 py-2 text-left font-normal">杀号</th>
+                      <th className="px-3 py-2 text-left font-normal">命中方法</th>
+                      <th className="px-3 py-2 text-left font-normal">开奖号码</th>
+                      <th className="px-3 py-2 text-center font-normal">结果</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...predictionHistory].reverse().slice(0, 50).map((p, i) => (
+                      <tr
+                        key={i}
+                        className="border-t border-white/5 hover:bg-white/[0.02]"
+                      >
+                        <td className="px-3 py-2 font-mono text-slate-300">{p.targetIssue}</td>
+                        <td className="px-3 py-2 font-mono text-kill">
+                          {p.killNumbers.sort((a, b) => a - b).join(", ")}
+                        </td>
+                        <td className="px-3 py-2 text-cyan-400">{p.methods.join(" ")}</td>
+                        <td className="px-3 py-2 font-mono text-slate-400">
+                          {p.actualNumbers ? p.actualNumbers.sort((a, b) => a - b).join(", ") : "--"}
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          {p.hit === undefined ? (
+                            <span className="text-amber-400">待验证</span>
+                          ) : p.hit ? (
+                            <span className="text-green-400">✓ 命中</span>
+                          ) : (
+                            <span className="text-red-400">✗ 失败</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* 手机端：卡片列表 */}
+              <div className="md:hidden max-h-[520px] space-y-2 overflow-y-auto">
+                {[...predictionHistory].reverse().slice(0, 50).map((p, i) => (
+                  <div key={i} className="rounded-lg border border-white/5 bg-white/[0.02] p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="font-mono text-xs text-slate-400">{p.targetIssue}</span>
+                      {p.hit === undefined ? (
+                        <span className="text-xs text-amber-400">待验证</span>
+                      ) : p.hit ? (
+                        <span className="text-xs text-green-400">✓ 命中</span>
+                      ) : (
+                        <span className="text-xs text-red-400">✗ 失败</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="text-slate-500">杀号</span>
+                      <span className="font-mono text-kill font-bold">
+                        {p.killNumbers.sort((a, b) => a - b).join(" ")}
+                      </span>
+                      <span className="text-slate-600 mx-1">|</span>
+                      <span className="text-slate-500">开奖</span>
+                      <span className="font-mono text-slate-300">
+                        {p.actualNumbers ? p.actualNumbers.sort((a, b) => a - b).join(" ") : "--"}
+                      </span>
+                    </div>
+                    {p.methods.length > 0 && (
+                      <div className="mt-1.5 text-[10px] text-cyan-500 flex flex-wrap gap-1">
+                        {p.methods.map((m, j) => (
+                          <span key={j} className="rounded bg-cyan-400/10 px-1.5 py-0.5">{m}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {/* 移动端：OmitTable 放这里 */}
           <div className="lg:hidden">
             <OmitTable stats={stats} />
           </div>
@@ -301,92 +391,6 @@ export default function DashboardPage() {
           <MethodInfo />
         </div>
       </div>
-
-      {/* 预测历史 */}
-      {predictionHistory.length > 0 && (
-        <div className="mt-8">
-          <div className="mb-2 flex items-center justify-between text-sm font-medium text-slate-400">
-            <span>预测历史（最近 {Math.min(predictionHistory.length, 50)} 条，共 {predictionHistory.length} 条）</span>
-          </div>
-
-          {/* 桌面端：表格 */}
-          <div className="hidden md:block max-h-[480px] overflow-y-auto rounded-lg border border-white/5">
-            <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-void-950 text-slate-500">
-                <tr>
-                  <th className="px-3 py-2 text-left font-normal">目标期号</th>
-                  <th className="px-3 py-2 text-left font-normal">杀号</th>
-                  <th className="px-3 py-2 text-left font-normal">命中方法</th>
-                  <th className="px-3 py-2 text-left font-normal">开奖号码</th>
-                  <th className="px-3 py-2 text-center font-normal">结果</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[...predictionHistory].reverse().slice(0, 50).map((p, i) => (
-                  <tr
-                    key={i}
-                    className="border-t border-white/5 hover:bg-white/[0.02]"
-                  >
-                    <td className="px-3 py-2 font-mono text-slate-300">{p.targetIssue}</td>
-                    <td className="px-3 py-2 font-mono text-kill">
-                      {p.killNumbers.sort((a, b) => a - b).join(", ")}
-                    </td>
-                    <td className="px-3 py-2 text-cyan-400">{p.methods.join(" ")}</td>
-                    <td className="px-3 py-2 font-mono text-slate-400">
-                      {p.actualNumbers ? p.actualNumbers.sort((a, b) => a - b).join(", ") : "--"}
-                    </td>
-                    <td className="px-3 py-2 text-center">
-                      {p.hit === undefined ? (
-                        <span className="text-amber-400">待验证</span>
-                      ) : p.hit ? (
-                        <span className="text-green-400">✓ 命中</span>
-                      ) : (
-                        <span className="text-red-400">✗ 失败</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* 手机端：卡片列表 */}
-          <div className="md:hidden max-h-[520px] space-y-2 overflow-y-auto">
-            {[...predictionHistory].reverse().slice(0, 50).map((p, i) => (
-              <div key={i} className="rounded-lg border border-white/5 bg-white/[0.02] p-3">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-mono text-xs text-slate-400">{p.targetIssue}</span>
-                  {p.hit === undefined ? (
-                    <span className="text-xs text-amber-400">待验证</span>
-                  ) : p.hit ? (
-                    <span className="text-xs text-green-400">✓ 命中</span>
-                  ) : (
-                    <span className="text-xs text-red-400">✗ 失败</span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="text-slate-500">杀号</span>
-                  <span className="font-mono text-kill font-bold">
-                    {p.killNumbers.sort((a, b) => a - b).join(" ")}
-                  </span>
-                  <span className="text-slate-600 mx-1">|</span>
-                  <span className="text-slate-500">开奖</span>
-                  <span className="font-mono text-slate-300">
-                    {p.actualNumbers ? p.actualNumbers.sort((a, b) => a - b).join(" ") : "--"}
-                  </span>
-                </div>
-                {p.methods.length > 0 && (
-                  <div className="mt-1.5 text-[10px] text-cyan-500 flex flex-wrap gap-1">
-                    {p.methods.map((m, j) => (
-                      <span key={j} className="rounded bg-cyan-400/10 px-1.5 py-0.5">{m}</span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
