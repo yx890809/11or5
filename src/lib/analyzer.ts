@@ -529,18 +529,16 @@ export function computeHitRate(history: PredictionHistoryItem[]): HitRateStats {
   return { overallHitRate, totalVerified, perMethod, recentHitRate, recentCount };
 }
 
-/** 根据各方法命中率自动微调权重 */
+/** 根据各方法命中率自动微调权重 - 命中率梯度式调整 */
 export function autoAdjustWeights(
   history: PredictionHistoryItem[],
   current: AnalyzerOptions,
 ): AnalyzerOptions {
   const stats = computeHitRate(history);
-  if (stats.totalVerified < 5) return current; // 数据太少不动
+  if (stats.totalVerified < 5) return current;
   const W = { ...current.weights };
-  const CLAMP = { min: 0.05, max: 0.45 };
-  const STEP = 0.03;
+  const CLAMP = { min: 0.05, max: 0.50 };
 
-  // 方法名 → options.weights 的 key
   const METHOD_KEY_MAP: Record<string, keyof AnalyzerOptions["weights"]> = {
     "冷热法": "hotCold",
     "极限法": "limit",
@@ -553,21 +551,149 @@ export function autoAdjustWeights(
 
   for (const [methodName, key] of Object.entries(METHOD_KEY_MAP)) {
     const m = stats.perMethod[methodName];
-    if (!m || m.total < 3) continue; // 样本太少不动
-    if (m.rate > 0.65) {
-      W[key] = Math.min(CLAMP.max, W[key] + STEP);
-    } else if (m.rate < 0.40) {
-      W[key] = Math.max(CLAMP.min, W[key] - STEP);
-    }
+    if (!m || m.total < 3) continue;
+    // 命中率梯度式调整：越高加越多，越低减越多
+    let delta = 0;
+    if (m.rate >= 0.85) delta = 0.08;      // 神准 → 大幅增
+    else if (m.rate >= 0.70) delta = 0.05;  // 很准 → 增
+    else if (m.rate >= 0.55) delta = 0.02;  // 还行 → 微调增
+    else if (m.rate < 0.25) delta = -0.08;  // 很差 → 大幅减
+    else if (m.rate < 0.40) delta = -0.05;  // 不准 → 减
+    else if (m.rate < 0.50) delta = -0.02;  // 偏差 → 微调减
+    W[key] = Math.max(CLAMP.min, Math.min(CLAMP.max, W[key] + delta));
   }
 
-  // 归一化：让权重总和回到 ~1.0
+  // 归一化
   const sum = Object.values(W).reduce((a, b) => a + b, 0);
   if (sum > 0) {
     for (const k of Object.keys(W) as (keyof AnalyzerOptions["weights"])[]) {
       W[k] = Math.round((W[k] / sum) * 100) / 100;
     }
   }
-
   return { ...current, weights: W };
+}
+
+/**
+ * AI 策略进化引擎 - 网格搜索最优权重组合
+ * 用历史开奖数据做回测，找出使预测命中率最高的权重组合
+ * 返回最优配置和回测命中率
+ */
+export interface BacktestResult {
+  bestOptions: AnalyzerOptions;
+  bestHitRate: number;
+  totalTests: number;
+  tested: number;
+  history: Array<{ weights: number[]; hitRate: number }>;
+}
+
+export function backtestAndOptimize(
+  records: LotteryRecord[],
+  current: AnalyzerOptions,
+  progress?: (done: number, total: number) => void,
+): BacktestResult {
+  const sorted = sortRecords(records);
+  if (sorted.length < 15) {
+    return { bestOptions: current, bestHitRate: 0, totalTests: 0, tested: 0, history: [] };
+  }
+
+  // 回测窗口：用前 N-5 期预测后 5 期，看命中率
+  const backtestSize = Math.min(30, sorted.length - 5); // 最多回测最近30期
+  const startIdx = sorted.length - backtestSize - 1;
+
+  // 7 个权重维度的候选值（粗网格 → 细网格）
+  const STEPS = [0.10, 0.15, 0.20, 0.25, 0.30];
+  const KEYS: (keyof AnalyzerOptions["weights"])[] = [
+    "hotCold", "limit", "headTail", "omit", "repeat", "neighbor", "sum",
+  ];
+
+  const history: BacktestResult["history"] = [];
+  let bestRate = -1;
+  let bestWeights = { ...current.weights };
+  let tested = 0;
+
+  // 第一阶段：每个方法逐个测试增减 0.05 的效果
+  const variants: Array<Partial<AnalyzerOptions["weights"]>> = [];
+
+  // 基准（当前权重）
+  variants.push({ ...current.weights });
+
+  // 每个方法 ±0.05
+  for (const key of KEYS) {
+    const cur = current.weights[key];
+    for (const delta of [0.05, -0.05, 0.10, -0.10]) {
+      const nv = cur + delta;
+      if (nv < 0.05 || nv > 0.50) continue;
+      const v: Partial<AnalyzerOptions["weights"]> = { ...current.weights };
+      v[key] = Math.round(nv * 100) / 100;
+      variants.push(v);
+    }
+  }
+
+  // 第二阶段：几个有代表性的均衡组合
+  variants.push({ hotCold: 0.20, repeat: 0.15, limit: 0.15, omit: 0.15, headTail: 0.10, neighbor: 0.10, sum: 0.15 });
+  variants.push({ hotCold: 0.15, repeat: 0.25, limit: 0.20, omit: 0.10, headTail: 0.05, neighbor: 0.10, sum: 0.15 });
+  variants.push({ hotCold: 0.30, repeat: 0.10, limit: 0.10, omit: 0.10, headTail: 0.10, neighbor: 0.10, sum: 0.20 });
+  variants.push({ hotCold: 0.10, repeat: 0.30, limit: 0.10, omit: 0.10, headTail: 0.10, neighbor: 0.15, sum: 0.15 });
+
+  const totalTests = variants.length;
+
+  for (const v of variants) {
+    // 归一化
+    const raw = KEYS.map((k) => v[k] ?? 0.14);
+    const sum = raw.reduce((a, b) => a + b, 0);
+    const normed: Partial<AnalyzerOptions["weights"]> = {};
+    for (let i = 0; i < KEYS.length; i++) {
+      normed[KEYS[i]] = Math.round((raw[i] / sum) * 100) / 100;
+    }
+
+    const opts: AnalyzerOptions = { ...current, weights: normed as AnalyzerOptions["weights"] };
+    const rate = runBacktest(sorted, opts, startIdx);
+
+    tested++;
+    history.push({ weights: KEYS.map((k) => normed[k]!), hitRate: rate });
+
+    if (rate > bestRate) {
+      bestRate = rate;
+      bestWeights = normed as AnalyzerOptions["weights"];
+    }
+
+    if (progress) progress(tested, totalTests);
+  }
+
+  return {
+    bestOptions: { ...current, weights: bestWeights },
+    bestHitRate: Math.round(bestRate * 10000) / 10000,
+    totalTests,
+    tested,
+    history,
+  };
+}
+
+/** 对单组权重跑回测，返回命中率 */
+function runBacktest(
+  sorted: LotteryRecord[],
+  opts: AnalyzerOptions,
+  startIdx: number,
+): number {
+  let correct = 0;
+  let total = 0;
+
+  for (let i = startIdx; i < sorted.length - 1; i++) {
+    const train = sorted.slice(0, i + 1);
+    const target = sorted[i + 1];
+    const actualNums = new Set(target.numbers);
+
+    if (train.length < 10) continue;
+
+    const rec = recommend(train, opts);
+    if (rec.killNumbers.length === 0) continue;
+
+    // 杀号正确 = 被杀号码没在开奖里
+    const killedRight = rec.killNumbers.filter((kn) => !actualNums.has(kn)).length;
+    // 2个杀号全对才算命中（严格模式）
+    if (killedRight === rec.killNumbers.length) correct++;
+    total++;
+  }
+
+  return total > 0 ? correct / total : 0;
 }

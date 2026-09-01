@@ -1,9 +1,10 @@
 // 分析看板页
-import { useMemo, useEffect, useRef } from "react";
+import { useMemo, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { TrendingUp, Database } from "lucide-react";
+import { TrendingUp, Database, Sparkles, Cpu } from "lucide-react";
 import { useLotteryStore } from "@/store";
-import { computeStats, recommend, autoAdjustWeights } from "@/lib/analyzer";
+import { computeStats, recommend, autoAdjustWeights, backtestAndOptimize } from "@/lib/analyzer";
+import type { BacktestResult } from "@/lib/analyzer";
 import { METHOD_LIST } from "@/types";
 import KillCard from "@/components/KillCard";
 import QuickAddCard from "@/components/QuickAddCard";
@@ -36,6 +37,39 @@ export default function DashboardPage() {
   const savePrediction = useLotteryStore((s) => s.savePrediction);
   const predictionHistory = useLotteryStore((s) => s.predictionHistory);
   const setOptions = useLotteryStore((s) => s.setOptions);
+
+  // AI 进化状态
+  const [aiRunning, setAiRunning] = useState(false);
+  const [aiProgress, setAiProgress] = useState(0);
+  const [aiResult, setAiResult] = useState<BacktestResult | null>(null);
+  const [aiError, setAiError] = useState("");
+
+  const runAiOptimize = () => {
+    if (records.length < 15) {
+      setAiError("至少需要 15 条历史数据才能启动 AI 进化");
+      return;
+    }
+    setAiRunning(true);
+    setAiError("");
+    setAiResult(null);
+    // 用 setTimeout 让 UI 先渲染出 loading 状态
+    setTimeout(() => {
+      try {
+        const result = backtestAndOptimize(records, options, (done, total) => {
+          setAiProgress(Math.round((done / total) * 100));
+        });
+        setAiResult(result);
+        // 自动应用最优权重
+        if (result.bestHitRate > 0) {
+          setOptions(result.bestOptions);
+        }
+      } catch (e) {
+        setAiError("AI 进化失败: " + (e as Error).message);
+      } finally {
+        setAiRunning(false);
+      }
+    }, 50);
+  };
 
   const result = useMemo(() => {
     if (records.length === 0) return null;
@@ -175,21 +209,98 @@ export default function DashboardPage() {
           />
         </div>
         <div className="space-y-6">
+          {/* AI 策略进化 */}
+          <div className="panel">
+            <div className="panel-header">
+              <Cpu className="h-4 w-4 text-gold-400" /> AI 策略进化
+            </div>
+            <div className="space-y-3 p-4">
+              <p className="text-xs leading-relaxed text-slate-400">
+                用历史数据跑网格回测，自动寻找最优权重组合，让策略不断进化。
+              </p>
+              <button
+                className="btn-gold w-full"
+                onClick={runAiOptimize}
+                disabled={aiRunning || records.length < 15}
+              >
+                {aiRunning ? (
+                  <>
+                    <span className="mr-2 inline-block h-3 w-3 animate-spin rounded-full border-2 border-void-950 border-t-transparent" />
+                    进化中 {aiProgress}%
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-4 w-4" />
+                    {records.length < 15 ? "需 15+ 条数据" : "启动 AI 进化"}
+                  </>
+                )}
+              </button>
+
+              {/* 进度条 */}
+              {aiRunning && (
+                <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+                  <div
+                    className="h-full bg-gradient-to-r from-gold-400 to-gold-300 transition-all"
+                    style={{ width: `${aiProgress}%` }}
+                  />
+                </div>
+              )}
+
+              {/* 错误 */}
+              {aiError && (
+                <div className="rounded border border-kill/30 bg-kill/10 px-2 py-1.5 text-xs text-kill">
+                  {aiError}
+                </div>
+              )}
+
+              {/* 结果 */}
+              {aiResult && !aiRunning && (
+                <div className="space-y-2 rounded-lg border border-gold-400/20 bg-gold-400/5 p-3 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">回测命中率</span>
+                    <span className="font-mono text-lg font-bold text-gold-300">
+                      {(aiResult.bestHitRate * 100).toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-slate-500">
+                    测试 {aiResult.tested}/{aiResult.totalTests} 组权重
+                  </div>
+                  <div className="border-t border-white/10 pt-2">
+                    <div className="mb-1 text-slate-400">最优权重：</div>
+                    <div className="grid grid-cols-2 gap-x-2 gap-y-1 font-mono text-[11px]">
+                      {METHOD_LIST.map((m) => {
+                        const key = m.key as keyof typeof aiResult.bestOptions.weights;
+                        const v = aiResult.bestOptions.weights[key] ?? 0;
+                        return (
+                          <span key={m.key} className="flex justify-between">
+                            <span className="text-slate-500">{m.name.slice(0, 4)}</span>
+                            <span className="text-cyan-400">{v.toFixed(2)}</span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="pt-1 text-[10px] text-green-400">✓ 已自动应用到参数面板</div>
+                </div>
+              )}
+            </div>
+          </div>
+
           <ParamPanel />
           <OmitTable stats={stats} />
           <MethodInfo />
         </div>
       </div>
 
-      {/* 预测历史（调试/展示用） */}
+      {/* 预测历史 */}
       {predictionHistory.length > 0 && (
         <div className="mt-8">
           <div className="mb-2 text-sm font-medium text-slate-400">
-            预测历史（最近 10 条）
+            预测历史（最近 {Math.min(predictionHistory.length, 50)} 条，共 {predictionHistory.length} 条）
           </div>
-          <div className="overflow-x-auto rounded-lg border border-white/5">
+          <div className="max-h-[480px] overflow-x-auto overflow-y-auto rounded-lg border border-white/5">
             <table className="w-full text-xs">
-              <thead className="bg-white/5 text-slate-500">
+              <thead className="sticky top-0 bg-white/5 text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left font-normal">目标期号</th>
                   <th className="px-3 py-2 text-left font-normal">杀号</th>
@@ -199,7 +310,7 @@ export default function DashboardPage() {
                 </tr>
               </thead>
               <tbody>
-                {[...predictionHistory].reverse().slice(0, 10).map((p, i) => (
+                {[...predictionHistory].reverse().slice(0, 50).map((p, i) => (
                   <tr
                     key={i}
                     className="border-t border-white/5 hover:bg-white/[0.02]"
