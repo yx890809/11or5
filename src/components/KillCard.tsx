@@ -11,9 +11,10 @@ interface Props {
 
 /** 杀 N 个号的理论随机正确率 */
 function killSuccessRate(n: number): string {
-  // C(11-n, 5) / C(11, 5)
+  // 每期开5个，随机杀N个号全不中的概率 = C(11-N,5)/C(11,5)
   const total = 462; // C(11,5)
-  const ok = [462, 252, 126, 56, 21][n] ?? 0;
+  const okMap: Record<number, number> = { 1: 252, 2: 126, 3: 56, 4: 21, 5: 6 };
+  const ok = okMap[n] ?? 0;
   return ((ok / total) * 100).toFixed(1);
 }
 

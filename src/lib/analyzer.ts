@@ -13,7 +13,7 @@ import type {
 
 export const DEFAULT_OPTIONS: AnalyzerOptions = {
   window: 30,
-  killCount: 1,        // 默认只杀1个号（理论正确率55%，比杀2个的27%高一倍）
+  killCount: 2,        // 固定杀2个号
   consensusMin: 3,     // 至少3种方法同时指向才杀（宁缺毋滥）
   weights: {
     hotCold: 0.25,

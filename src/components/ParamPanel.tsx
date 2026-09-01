@@ -25,30 +25,15 @@ export default function ParamPanel() {
         <SlidersHorizontal className="h-4 w-4 text-gold-400" /> 参数调节
       </div>
       <div className="space-y-4 p-4">
-        {/* 杀号数量 + 共识门槛 两个新参数 */}
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <div className="mb-1.5 flex items-center justify-between text-xs">
-              <span className="text-slate-400">杀号数量</span>
-            </div>
-            <div className="flex gap-1">
-              {[1, 2, 3].map((n) => (
-                <button
-                  key={n}
-                  onClick={() => setOptions({ ...options, killCount: n })}
-                  className={`flex-1 rounded px-2 py-1.5 text-xs font-mono transition ${
-                    options.killCount === n
-                      ? "bg-gold-400 text-void-950 font-bold"
-                      : "bg-white/5 text-slate-400 hover:bg-white/10"
-                  }`}
-                  title={n === 1 ? "理论正确率 55%" : n === 2 ? "理论正确率 27%" : "理论正确率 12%"}
-                >
-                  {n}个
-                </button>
-              ))}
-            </div>
+        {/* 共识门槛（杀号数量固定2个） */}
+        <div>
+          <div className="mb-1.5 flex items-center justify-between text-xs">
+            <span className="text-slate-400">杀号数量</span>
+            <span className="rounded bg-gold-400/15 px-2 py-0.5 font-mono text-gold-300 ring-1 ring-gold-400/40">
+              固定 2 个
+            </span>
           </div>
-          <div>
+          <div className="mb-3">
             <div className="mb-1.5 flex items-center justify-between text-xs">
               <span className="text-slate-400">共识门槛</span>
               <span className="font-mono text-gold-300">{options.consensusMin}/7</span>

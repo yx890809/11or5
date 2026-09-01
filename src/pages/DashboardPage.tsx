@@ -71,6 +71,30 @@ export default function DashboardPage() {
     }, 50);
   };
 
+  // 自动 AI 进化：每次有新开奖数据来了，静默后台跑一次回测调权重
+  const lastAutoIssueRef = useRef<string>("");
+  useEffect(() => {
+    if (records.length < 15) return;
+    const latest = records[records.length - 1];
+    if (!latest) return;
+    // 同一期号不重复进化（参数调整/页面刷新时不触发）
+    if (latest.issue === lastAutoIssueRef.current) return;
+    lastAutoIssueRef.current = latest.issue;
+
+    // 后台静默跑，不阻塞 UI
+    setTimeout(() => {
+      try {
+        const result = backtestAndOptimize(records, options);
+        if (result.bestHitRate > 0) {
+          setOptions(result.bestOptions);
+          setAiResult(result); // 更新一下 UI 上显示的最优权重
+        }
+      } catch {
+        // 静默忽略自动进化的错误，不打扰用户
+      }
+    }, 200);
+  }, [records, setOptions]);
+
   const result = useMemo(() => {
     if (records.length === 0) return null;
     const stats = computeStats(records, options.window);
