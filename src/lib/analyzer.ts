@@ -1,4 +1,4 @@
-// 11选5 杀号算法核心
+// 11选5 杀号 + 定胆算法核心
 import type {
   LotteryRecord,
   NumberStat,
@@ -7,6 +7,8 @@ import type {
   AnalyzerOptions,
   HitRateStats,
   PredictionHistoryItem,
+  DanScoreDetail,
+  DanRecommendation,
 } from "@/types";
 
 export const DEFAULT_OPTIONS: AnalyzerOptions = {
@@ -312,6 +314,139 @@ export function recommend(
     killNumbers: kill.map((k) => k.num),
     details: byScore,
   };
+}
+
+/**
+ * 定位胆推荐算法
+ * 综合11种定胆方法对每个号码打分（越高越可能是胆码）
+ * 返回前 N 个作为胆码，默认 2 个
+ */
+export function recommendDan(
+  records: LotteryRecord[],
+  danCount = 2,
+  window = 30,
+): DanRecommendation {
+  const sorted = sortRecords(records);
+  const windowRecords = sorted.slice(-Math.min(window, sorted.length));
+  const stats = computeStats(sorted, window);
+
+  if (sorted.length < 5) {
+    return { danNumbers: [], allScores: [] };
+  }
+
+  const latest = sorted[sorted.length - 1];
+  const prev = sorted[sorted.length - 2];
+  const latestNums = new Set(latest.numbers);
+
+  // 初始化所有号码分数
+  const scoreMap: Record<number, { score: number; methods: Set<string> }> = {};
+  for (let n = 1; n <= 11; n++) {
+    scoreMap[n] = { score: 0, methods: new Set() };
+  }
+
+  const add = (num: number, score: number, method: string) => {
+    if (num >= 1 && num <= 11) {
+      scoreMap[num].score += score;
+      scoreMap[num].methods.add(method);
+    }
+  };
+
+  // ============ 11 种定胆方法 ============
+
+  // 1. 热号定胆法：频次最高的号码加分
+  const sortedByFreq = [...stats].sort((a, b) => b.freq - a.freq);
+  sortedByFreq.slice(0, 4).forEach((s, i) => {
+    add(s.num, 30 - i * 6, "热号定胆");
+  });
+
+  // 2. 重号定胆法：上期开奖号码全部加分
+  latest.numbers.forEach((n) => add(n, 25, "重号定胆"));
+
+  // 3. 遗漏回补定胆法：遗漏3-6期的号码加分（回补概率较高）
+  stats
+    .filter((s) => s.currentOmit >= 2 && s.currentOmit <= 7)
+    .forEach((s) => add(s.num, 20 - Math.abs(s.currentOmit - 4) * 2, "遗漏回补"));
+
+  // 4. 斜连定胆法：上期号码±1
+  latest.numbers.forEach((n) => {
+    if (n > 1) add(n - 1, 18, "斜连定胆");
+    if (n < 11) add(n + 1, 18, "斜连定胆");
+  });
+
+  // 5. 连号定胆法：上期有连号则延伸
+  const sortedLatest = [...latest.numbers].sort((a, b) => a - b);
+  for (let i = 0; i < sortedLatest.length - 1; i++) {
+    if (sortedLatest[i + 1] - sortedLatest[i] === 1) {
+      // 找到连号 a,a+1 → 推 a-1 和 a+2
+      const a = sortedLatest[i];
+      if (a > 1) add(a - 1, 15, "连号延伸");
+      if (a + 2 <= 11) add(a + 2, 15, "连号延伸");
+    }
+  }
+
+  // 6. 首尾差定胆法
+  const first = Math.min(...latest.numbers);
+  const last = Math.max(...latest.numbers);
+  const diff = last - first;
+  if (diff >= 1 && diff <= 11) add(diff, 12, "首尾差定胆");
+
+  // 7. 和值推导定胆法：最近3期和值均值附近
+  const sumRecent = sorted.slice(-3).map((r) => r.numbers.reduce((a, b) => a + b, 0));
+  const avgSum = sumRecent.reduce((a, b) => a + b, 0) / sumRecent.length;
+  // 和值范围在 15-45 之间（11选5），均值/5 约等于平均号
+  const avgBall = Math.round(avgSum / 5);
+  if (avgBall >= 1 && avgBall <= 11) {
+    add(avgBall, 10, "和值推导");
+    if (avgBall > 1) add(avgBall - 1, 6, "和值推导");
+    if (avgBall < 11) add(avgBall + 1, 6, "和值推导");
+  }
+
+  // 8. 交叉定胆法：最小遗漏值号码相加 - 最大遗漏值号码
+  const minOmit = Math.min(...stats.map((s) => s.currentOmit));
+  const maxOmit = Math.max(...stats.map((s) => s.currentOmit));
+  const minOmitNums = stats.filter((s) => s.currentOmit === minOmit).map((s) => s.num);
+  const minOmitSum = minOmitNums.reduce((a, b) => a + b, 0);
+  const cross = minOmitSum - maxOmit;
+  if (cross >= 1 && cross <= 11) add(cross, 10, "交叉定胆");
+
+  // 9. 最大号减最大遗漏定胆法
+  const recentMax = Math.max(...latest.numbers);
+  const maxOmitNum = stats.reduce((a, b) => (a.maxOmit > b.maxOmit ? a : b)).num;
+  const recentMaxOmit = stats.find((s) => s.num === maxOmitNum)!.currentOmit;
+  const maxMinusOmit = recentMax - recentMaxOmit;
+  if (maxMinusOmit >= 1 && maxMinusOmit <= 11) add(maxMinusOmit, 10, "最大号-遗漏");
+
+  // 10. 跨度定胆法：上期跨度范围
+  const span = last - first;
+  // 跨度值本身可作胆（偶尔有效）
+  if (span >= 1 && span <= 11) add(span, 5, "跨度定胆");
+
+  // 11. 连开定胆法：连续2期以上重号
+  if (prev) {
+    const prevNums = new Set(prev.numbers);
+    const repeats = latest.numbers.filter((n) => prevNums.has(n));
+    repeats.forEach((n) => add(n, 8, "连开定胆"));
+  }
+
+  // 每期都出的号码加更多分（超热）
+  const streakHot = stats.filter((s) => s.repeatStreak >= 2);
+  streakHot.forEach((s) => add(s.num, s.repeatStreak * 4, "连开定胆"));
+
+  // ============ 汇总排序 ============
+  const allScores: DanScoreDetail[] = [];
+  for (let n = 1; n <= 11; n++) {
+    allScores.push({
+      num: n,
+      score: scoreMap[n].score,
+      methods: [...scoreMap[n].methods],
+    });
+  }
+  allScores.sort((a, b) => b.score - a.score);
+
+  // 取前 N 个胆码
+  const danNumbers = allScores.slice(0, danCount).map((d) => d.num);
+
+  return { danNumbers, allScores };
 }
 
 /**

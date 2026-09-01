@@ -1,11 +1,12 @@
 // 侧边导航
 import { NavLink } from "react-router-dom";
-import { Database, LayoutDashboard, Crosshair } from "lucide-react";
+import { Database, LayoutDashboard, Crosshair, Target } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const links = [
   { to: "/", label: "数据接入", icon: Database },
-  { to: "/dashboard", label: "分析看板", icon: LayoutDashboard },
+  { to: "/dashboard", label: "杀号分析", icon: LayoutDashboard },
+  { to: "/dandan", label: "定位胆分析", icon: Target },
 ];
 
 export default function Sidebar() {

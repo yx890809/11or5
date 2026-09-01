@@ -115,6 +115,34 @@ export const METHOD_LIST: MethodMeta[] = [
   },
 ];
 
+/** 定位胆方法说明（11种） */
+export const DAN_METHOD_LIST: MethodMeta[] = [
+  { key: "hotDan", name: "热号定胆法", desc: "近期出现频率最高的号码作为胆码，热号有延续性" },
+  { key: "repeatDan", name: "重号定胆法", desc: "上期开奖号码中选1-2个作为胆码，每期约75%概率出现重号" },
+  { key: "omitDan", name: "遗漏回补定胆法", desc: "遗漏3-6期的号码有较高回补概率，选遗漏值中等的号码" },
+  { key: "neighborDan", name: "斜连定胆法", desc: "上期开奖号±1的邻号（斜连），每期几乎都有" },
+  { key: "consecDan", name: "连号定胆法", desc: "上期开出连号如05,06，则关注04/07做胆" },
+  { key: "headTailDan", name: "首尾差定胆法", desc: "上期首尾球相减差值作为胆码" },
+  { key: "sumDan", name: "和值推导定胆法", desc: "最近3期和值走势推导胆码范围" },
+  { key: "crossDan", name: "交叉定胆法", desc: "最小遗漏值号码相加减最大遗漏值号码" },
+  { key: "maxMinDan", name: "最大号减最大遗漏定胆法", desc: "上期最大开奖号 - 最大遗漏期数 = 胆码" },
+  { key: "spanDan", name: "跨度定胆法", desc: "上期跨度（最大-最小）范围附近的号码" },
+  { key: "streakDan", name: "连开定胆法", desc: "连续2期以上开出的号码继续做胆" },
+];
+
+/** 单号码定胆得分明细 */
+export interface DanScoreDetail {
+  num: number;
+  score: number; // 0-100（越高越可能是胆）
+  methods: string[]; // 命中的定胆方法
+}
+
+/** 定位胆推荐结果 */
+export interface DanRecommendation {
+  danNumbers: number[]; // 推荐的胆码（按用户选择数量）
+  allScores: DanScoreDetail[]; // 所有号码的胆码评分排序
+}
+
 /** 单条预测记录（用于命中率回溯） */
 export interface PredictionHistoryItem {
   /** 杀号是针对"哪一期"的（即开出来验证的那一期） */
