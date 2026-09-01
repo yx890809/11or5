@@ -187,29 +187,111 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      {/* 杀号推荐卡 + 命中率卡 并排 */}
+      {/* 1. 顶部：杀号推荐卡 + 命中率卡 并排 */}
       <div className="mb-4 grid grid-cols-1 gap-6 xl:grid-cols-[2fr_1fr]">
         <KillCard recommendation={recommendation} stats={stats} />
         <HitRateCard />
       </div>
 
-      {/* 中间填充区：快速追加 + 历史开奖 并排 */}
-      <div className="mb-4 grid grid-cols-1 gap-6 xl:grid-cols-[1fr_2fr]">
-        {/* 左：快速追加 */}
+      {/* 2. 快速追加：独立长条形，恢复原位 */}
+      <div className="mb-4">
         <QuickAddCard latestIssue={latest?.issue} />
+      </div>
 
-        {/* 右：历史开奖（移上来填空白） */}
+      {/* 3. 中间三栏并排：历史开奖 | AI进化 | 参数调节 */}
+      <div className="mb-4 grid grid-cols-1 gap-6 lg:grid-cols-3">
+        {/* 历史开奖（左） */}
         <HistoryTable
           records={records}
           stats={stats}
           killNumbers={recommendation.killNumbers}
         />
+
+        {/* AI 策略进化（中） */}
+        <div className="panel">
+          <div className="panel-header">
+            <Cpu className="h-4 w-4 text-gold-400" /> AI 策略进化
+          </div>
+          <div className="space-y-3 p-4">
+            <p className="text-xs leading-relaxed text-slate-400">
+              用历史数据跑网格回测，自动寻找最优权重组合，让策略不断进化。
+            </p>
+            <button
+              className="btn-gold w-full"
+              onClick={runAiOptimize}
+              disabled={aiRunning || records.length < 15}
+            >
+              {aiRunning ? (
+                <>
+                  <span className="mr-2 inline-block h-3 w-3 animate-spin rounded-full border-2 border-void-950 border-t-transparent" />
+                  进化中 {aiProgress}%
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-4 w-4" />
+                  {records.length < 15 ? "需 15+ 条数据" : "启动 AI 进化"}
+                </>
+              )}
+            </button>
+
+            {/* 进度条 */}
+            {aiRunning && (
+              <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+                <div
+                  className="h-full bg-gradient-to-r from-gold-400 to-gold-300 transition-all"
+                  style={{ width: `${aiProgress}%` }}
+                />
+              </div>
+            )}
+
+            {/* 错误 */}
+            {aiError && (
+              <div className="rounded border border-kill/30 bg-kill/10 px-2 py-1.5 text-xs text-kill">
+                {aiError}
+              </div>
+            )}
+
+            {/* 结果 */}
+            {aiResult && !aiRunning && (
+              <div className="space-y-2 rounded-lg border border-gold-400/20 bg-gold-400/5 p-3 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">回测命中率</span>
+                  <span className="font-mono text-lg font-bold text-gold-300">
+                    {(aiResult.bestHitRate * 100).toFixed(1)}%
+                  </span>
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  测试 {aiResult.tested}/{aiResult.totalTests} 组权重
+                </div>
+                <div className="border-t border-white/10 pt-2">
+                  <div className="mb-1 text-slate-400">最优权重：</div>
+                  <div className="grid grid-cols-2 gap-x-2 gap-y-1 font-mono text-[11px]">
+                    {METHOD_LIST.map((m) => {
+                      const key = m.key as keyof typeof aiResult.bestOptions.weights;
+                      const v = aiResult.bestOptions.weights[key] ?? 0;
+                      return (
+                        <span key={m.key} className="flex justify-between">
+                          <span className="text-slate-500">{m.name.slice(0, 4)}</span>
+                          <span className="text-cyan-400">{v.toFixed(2)}</span>
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="pt-1 text-[10px] text-green-400">✓ 已自动应用到参数面板</div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* 参数调节（右） */}
+        <ParamPanel />
       </div>
 
-      {/* 主体网格 */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        {/* 左中：统计图表 + 预测历史 */}
-        <div className="space-y-6 lg:col-span-2 order-2 lg:order-1">
+      {/* 4. 底部：冷热图 + 预测历史 + 遗漏表 + 方法说明 */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
+        {/* 冷热频次（占 2 列） */}
+        <div className="lg:col-span-2 space-y-6">
           <FreqChart stats={stats} />
 
           {/* 预测历史 */}
@@ -297,97 +379,11 @@ export default function DashboardPage() {
               </div>
             </div>
           ) : null}
-
-          {/* 移动端：OmitTable 放这里 */}
-          <div className="lg:hidden">
-            <OmitTable stats={stats} />
-          </div>
         </div>
 
-        {/* 右侧栏：AI 进化 + 参数 + 遗漏表(桌面) + 方法说明 */}
-        <div className="space-y-6 order-1 lg:order-2">
-          {/* AI 策略进化 */}
-          <div className="panel">
-            <div className="panel-header">
-              <Cpu className="h-4 w-4 text-gold-400" /> AI 策略进化
-            </div>
-            <div className="space-y-3 p-4">
-              <p className="text-xs leading-relaxed text-slate-400">
-                用历史数据跑网格回测，自动寻找最优权重组合，让策略不断进化。
-              </p>
-              <button
-                className="btn-gold w-full"
-                onClick={runAiOptimize}
-                disabled={aiRunning || records.length < 15}
-              >
-                {aiRunning ? (
-                  <>
-                    <span className="mr-2 inline-block h-3 w-3 animate-spin rounded-full border-2 border-void-950 border-t-transparent" />
-                    进化中 {aiProgress}%
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="h-4 w-4" />
-                    {records.length < 15 ? "需 15+ 条数据" : "启动 AI 进化"}
-                  </>
-                )}
-              </button>
-
-              {/* 进度条 */}
-              {aiRunning && (
-                <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
-                  <div
-                    className="h-full bg-gradient-to-r from-gold-400 to-gold-300 transition-all"
-                    style={{ width: `${aiProgress}%` }}
-                  />
-                </div>
-              )}
-
-              {/* 错误 */}
-              {aiError && (
-                <div className="rounded border border-kill/30 bg-kill/10 px-2 py-1.5 text-xs text-kill">
-                  {aiError}
-                </div>
-              )}
-
-              {/* 结果 */}
-              {aiResult && !aiRunning && (
-                <div className="space-y-2 rounded-lg border border-gold-400/20 bg-gold-400/5 p-3 text-xs">
-                  <div className="flex items-center justify-between">
-                    <span className="text-slate-400">回测命中率</span>
-                    <span className="font-mono text-lg font-bold text-gold-300">
-                      {(aiResult.bestHitRate * 100).toFixed(1)}%
-                    </span>
-                  </div>
-                  <div className="text-[10px] text-slate-500">
-                    测试 {aiResult.tested}/{aiResult.totalTests} 组权重
-                  </div>
-                  <div className="border-t border-white/10 pt-2">
-                    <div className="mb-1 text-slate-400">最优权重：</div>
-                    <div className="grid grid-cols-2 gap-x-2 gap-y-1 font-mono text-[11px]">
-                      {METHOD_LIST.map((m) => {
-                        const key = m.key as keyof typeof aiResult.bestOptions.weights;
-                        const v = aiResult.bestOptions.weights[key] ?? 0;
-                        return (
-                          <span key={m.key} className="flex justify-between">
-                            <span className="text-slate-500">{m.name.slice(0, 4)}</span>
-                            <span className="text-cyan-400">{v.toFixed(2)}</span>
-                          </span>
-                        );
-                      })}
-                    </div>
-                  </div>
-                  <div className="pt-1 text-[10px] text-green-400">✓ 已自动应用到参数面板</div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <ParamPanel />
-          {/* 桌面端才在右侧栏显示 OmitTable */}
-          <div className="hidden lg:block">
-            <OmitTable stats={stats} />
-          </div>
+        {/* 遗漏表 + 方法说明（2列） */}
+        <div className="lg:col-span-2 space-y-6">
+          <OmitTable stats={stats} />
           <MethodInfo />
         </div>
       </div>
