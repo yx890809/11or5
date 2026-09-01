@@ -200,15 +200,22 @@ export default function DashboardPage() {
 
       {/* 主体网格 */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <div className="space-y-6 lg:col-span-2">
+        {/* 左中：统计图表 + 历史开奖 */}
+        <div className="space-y-6 lg:col-span-2 order-2 lg:order-1">
           <FreqChart stats={stats} />
           <HistoryTable
             records={records}
             stats={stats}
             killNumbers={recommendation.killNumbers}
           />
+          {/* 移动端：OmitTable 放这里（紧跟历史开奖）*/}
+          <div className="lg:hidden">
+            <OmitTable stats={stats} />
+          </div>
         </div>
-        <div className="space-y-6">
+
+        {/* 右侧栏：AI 进化 + 参数 + 遗漏表(桌面) + 方法说明 */}
+        <div className="space-y-6 order-1 lg:order-2">
           {/* AI 策略进化 */}
           <div className="panel">
             <div className="panel-header">
@@ -287,7 +294,10 @@ export default function DashboardPage() {
           </div>
 
           <ParamPanel />
-          <OmitTable stats={stats} />
+          {/* 桌面端才在右侧栏显示 OmitTable */}
+          <div className="hidden lg:block">
+            <OmitTable stats={stats} />
+          </div>
           <MethodInfo />
         </div>
       </div>
@@ -295,12 +305,14 @@ export default function DashboardPage() {
       {/* 预测历史 */}
       {predictionHistory.length > 0 && (
         <div className="mt-8">
-          <div className="mb-2 text-sm font-medium text-slate-400">
-            预测历史（最近 {Math.min(predictionHistory.length, 50)} 条，共 {predictionHistory.length} 条）
+          <div className="mb-2 flex items-center justify-between text-sm font-medium text-slate-400">
+            <span>预测历史（最近 {Math.min(predictionHistory.length, 50)} 条，共 {predictionHistory.length} 条）</span>
           </div>
-          <div className="max-h-[480px] overflow-x-auto overflow-y-auto rounded-lg border border-white/5">
+
+          {/* 桌面端：表格 */}
+          <div className="hidden md:block max-h-[480px] overflow-y-auto rounded-lg border border-white/5">
             <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-white/5 text-slate-500">
+              <thead className="sticky top-0 bg-void-950 text-slate-500">
                 <tr>
                   <th className="px-3 py-2 text-left font-normal">目标期号</th>
                   <th className="px-3 py-2 text-left font-normal">杀号</th>
@@ -336,6 +348,42 @@ export default function DashboardPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+
+          {/* 手机端：卡片列表 */}
+          <div className="md:hidden max-h-[520px] space-y-2 overflow-y-auto">
+            {[...predictionHistory].reverse().slice(0, 50).map((p, i) => (
+              <div key={i} className="rounded-lg border border-white/5 bg-white/[0.02] p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-mono text-xs text-slate-400">{p.targetIssue}</span>
+                  {p.hit === undefined ? (
+                    <span className="text-xs text-amber-400">待验证</span>
+                  ) : p.hit ? (
+                    <span className="text-xs text-green-400">✓ 命中</span>
+                  ) : (
+                    <span className="text-xs text-red-400">✗ 失败</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-slate-500">杀号</span>
+                  <span className="font-mono text-kill font-bold">
+                    {p.killNumbers.sort((a, b) => a - b).join(" ")}
+                  </span>
+                  <span className="text-slate-600 mx-1">|</span>
+                  <span className="text-slate-500">开奖</span>
+                  <span className="font-mono text-slate-300">
+                    {p.actualNumbers ? p.actualNumbers.sort((a, b) => a - b).join(" ") : "--"}
+                  </span>
+                </div>
+                {p.methods.length > 0 && (
+                  <div className="mt-1.5 text-[10px] text-cyan-500 flex flex-wrap gap-1">
+                    {p.methods.map((m, j) => (
+                      <span key={j} className="rounded bg-cyan-400/10 px-1.5 py-0.5">{m}</span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         </div>
       )}
