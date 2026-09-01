@@ -54,6 +54,18 @@ export interface KillRecommendation {
   details: ScoreDetail[];
 }
 
+/** 硬规则杀号的遗漏区间配置（AI自动调优的就是这个） */
+export interface OmitTierConfig {
+  /** tier1: 最安全的杀号区间 — [最小遗漏, 最大遗漏]，如 [5,7] */
+  tier1Range: [number, number];
+  /** tier2: 次安全 — 是否杀上期刚出的号(o=0) */
+  tier2KillRepeat: boolean;
+  /** tier3: 第三优先 — 遗漏为4的号 */
+  tier3KillOmit4: boolean;
+  /** 是否严格禁止杀危险区间 (o=1,2,3,>=8) */
+  tier4Strict: boolean;
+}
+
 /** 算法参数 */
 export interface AnalyzerOptions {
   /** 统计窗口期数 */
@@ -72,6 +84,8 @@ export interface AnalyzerOptions {
     neighbor: number;
     sum: number;
   };
+  /** 硬规则杀号的遗漏区间（AI进化引擎自动调优） */
+  omitTiers?: OmitTierConfig;
 }
 
 /** 杀号方法说明 */

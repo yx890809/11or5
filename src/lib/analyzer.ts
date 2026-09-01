@@ -9,8 +9,17 @@ import type {
   PredictionHistoryItem,
   DanScoreDetail,
   DanRecommendation,
+  OmitTierConfig,
 } from "@/types";
 import { METHOD_LIST } from "@/types";
+
+/** 默认硬规则杀号区间（基于56期真实前向验证调出来的最优默认值） */
+export const DEFAULT_OMIT_TIERS: OmitTierConfig = {
+  tier1Range: [5, 7],     // o=5-7 黄金区间
+  tier2KillRepeat: true,  // 杀上期刚出的号(o=0)
+  tier3KillOmit4: true,   // 杀遗漏4期
+  tier4Strict: true,      // 禁止杀 o=1,2,3,>=8 危险区间
+};
 
 export const DEFAULT_OPTIONS: AnalyzerOptions = {
   window: 30,
@@ -47,6 +56,7 @@ function normalizeOptions(opts?: Partial<AnalyzerOptions>): AnalyzerOptions {
       neighbor: opts.weights?.neighbor ?? DEFAULT_OPTIONS.weights.neighbor,
       sum: opts.weights?.sum ?? DEFAULT_OPTIONS.weights.sum,
     },
+    omitTiers: opts.omitTiers ?? DEFAULT_OMIT_TIERS,
   };
 }
 
@@ -484,6 +494,7 @@ export function recommend(
 ): KillRecommendation {
   options = normalizeOptions(options);
   const killCount = Math.max(1, Math.min(3, options.killCount));
+  const tiers = options.omitTiers ?? DEFAULT_OMIT_TIERS;
 
   const sorted = sortRecords(records);
   if (sorted.length < 1) {
@@ -505,28 +516,33 @@ export function recommend(
   const detailMap = new Map(details.map((d) => [d.num, d]));
 
   // ══════════════════════════════════════════════════
-  // 硬规则杀号（基于真实数据的安全度排序）
-  // 每个号根据遗漏值分区间，下期出现率数据：
-  //   o=5-7 黄金区间: 下期出现率 9.5%  → 杀（90.5%安全）
-  //   o=0  上期刚出:  下期出现率 33.2% → 杀（66.8%安全）
-  //   o=4             下期出现率 36.4% → 杀（63.6%安全）
-  //   o=1/2/3 温号期: 下期出现率 54-70% → 绝对不能杀！很容易出
-  //   o=8-9 极端遗漏: 下期出现率 100%！ → 均值回归，不能杀，反而要关注
-  //   o>=10 极端冷号: 均值回归，也不能杀
+  // 硬规则杀号（区间由 AI 进化引擎自动调优）
+  // tier1: o ∈ [tier1Range[0], tier1Range[1]]  → 最安全
+  // tier2: tier2KillRepeat 时 o=0 的号 → 次安全
+  // tier3: tier3KillOmit4 时 o=4 的号 → 第三优先
+  // tier4: 兜底（tier4Strict 时仅从危险区间里跳过）
   // ══════════════════════════════════════════════════
 
-  const tier1: number[] = []; // o=5-7 黄金区间，优先杀
-  const tier2: number[] = []; // o=0 上期号，次优先
-  const tier3: number[] = []; // o=4 遗漏4期
-  const tier4: number[] = []; // 其他（兜底，谨慎杀）
+  const tier1: number[] = [];
+  const tier2: number[] = [];
+  const tier3: number[] = [];
+  const tier4: number[] = [];
+  const [t1lo, t1hi] = tiers.tier1Range;
 
   for (let n = 1; n <= 11; n++) {
     const o = omit[n];
-    if (o >= 5 && o <= 7) tier1.push(n);
-    else if (o === 0) tier2.push(n);
-    else if (o === 4) tier3.push(n);
-    else tier4.push(n);
-    // o=1,2,3,8,9,>=10 都尽量不要杀！
+    if (o >= t1lo && o <= t1hi) {
+      tier1.push(n);
+    } else if (tiers.tier2KillRepeat && o === 0) {
+      tier2.push(n);
+    } else if (tiers.tier3KillOmit4 && o === 4) {
+      tier3.push(n);
+    } else {
+      // tier4Strict: 危险区间（o=1,2,3,>=8）的号也不要进 tier4
+      if (!tiers.tier4Strict || (o !== 1 && o !== 2 && o !== 3 && o < 8)) {
+        tier4.push(n);
+      }
+    }
   }
 
   // tier4 里的按原共识排序兜底
@@ -544,18 +560,15 @@ export function recommend(
   // 按优先级拼起来取 killCount 个
   const kill: number[] = [...tier1, ...tier2, ...tier3, ...tier4sorted].slice(0, killCount);
 
-  // 合并 methods 展示：
-  //   遗漏区间 → "遗漏5-7期" / "遗漏4期" / "遗漏8期" 等
-  //   上期出现 → "上期号"
-  //   保留 scoreNumbers 的方法名
+  // 合并 methods 展示（动态生成描述）
   const killDetails = kill.map((num) => {
     const base = detailMap.get(num);
     const extra: string[] = [];
     const o = omit[num];
-    if (o >= 5 && o <= 7) extra.push(`遗漏${o}期(黄金区间)`);
-    else if (o === 4) extra.push(`遗漏4期`);
-    else if (o >= 8 && o <= 9) extra.push(`遗漏${o}期`);
-    if (lastNums.has(num)) extra.push("上期出现");
+    if (o >= t1lo && o <= t1hi) extra.push(`遗漏${o}期(黄金区间)`);
+    else if (o === 0 && tiers.tier2KillRepeat) extra.push("上期出现");
+    else if (o === 4 && tiers.tier3KillOmit4) extra.push(`遗漏4期`);
+    else if (o >= 8) extra.push(`遗漏${o}期(均值回归区)`);
     return {
       ...base!,
       methods: Array.from(new Set([...extra, ...(base?.methods || [])])),
@@ -1071,7 +1084,7 @@ export interface BacktestResult {
   bestHitRate: number;
   totalTests: number;
   tested: number;
-  history: Array<{ weights: number[]; hitRate: number }>;
+  history: Array<{ tiers: OmitTierConfig; hitRate: number; maxFail: number }>;
 }
 
 /**
@@ -1142,8 +1155,9 @@ export function quickBacktestDan(
 }
 
 /**
- * AI 策略进化引擎
- * 用网格搜索遍历权重组合，回测选出最优
+ * AI 策略进化引擎 v2 — 自动调优硬规则杀号的遗漏区间
+ * 遍历几十个区间组合，用真实数据前向验证，选出杀对率最高的配置
+ * 每次有新开奖数据自动静默运行，把最优结果存入 localStorage
  */
 export function backtestAndOptimize(
   records: LotteryRecord[],
@@ -1155,72 +1169,59 @@ export function backtestAndOptimize(
     return { bestOptions: current, bestHitRate: 0, totalTests: 0, tested: 0, history: [] };
   }
 
-  // 回测窗口：用前 N-5 期预测后 5 期，看命中率
-  const backtestSize = Math.min(30, sorted.length - 5); // 最多回测最近30期
-  const startIdx = sorted.length - backtestSize - 1;
+  // 回测窗口：最近 40 期
+  const backtestSize = Math.min(40, sorted.length - 5);
+  const startIdx = Math.max(15, sorted.length - backtestSize - 1);
 
-  // 7 个权重维度的候选值（粗网格 → 细网格）
-  const STEPS = [0.10, 0.15, 0.20, 0.25, 0.30];
-  const KEYS: (keyof AnalyzerOptions["weights"])[] = [
-    "hotCold", "limit", "headTail", "omit", "repeat", "neighbor", "sum",
+  // ════════════════════════════════════════════════
+  // 候选区间组合（基于数据规律的合理范围）
+  // tier1Range 扫 8 种组合 × killRepeat × killOmit4 = 32 组
+  // ════════════════════════════════════════════════
+
+  const tier1Candidates: Array<[number, number]> = [
+    [3, 5], [4, 6], [4, 7], [5, 7], [5, 8], [6, 8], [5, 9], [4, 8],
   ];
 
-  const history: BacktestResult["history"] = [];
-  let bestRate = -1;
-  let bestWeights = { ...current.weights };
-  let tested = 0;
-
-  // 第一阶段：每个方法逐个测试增减 0.05 的效果
-  const variants: Array<Partial<AnalyzerOptions["weights"]>> = [];
-
-  // 基准（当前权重）
-  variants.push({ ...current.weights });
-
-  // 每个方法 ±0.05
-  for (const key of KEYS) {
-    const cur = current.weights[key];
-    for (const delta of [0.05, -0.05, 0.10, -0.10]) {
-      const nv = cur + delta;
-      if (nv < 0.05 || nv > 0.50) continue;
-      const v: Partial<AnalyzerOptions["weights"]> = { ...current.weights };
-      v[key] = Math.round(nv * 100) / 100;
-      variants.push(v);
+  const variants: OmitTierConfig[] = [];
+  for (const range of tier1Candidates) {
+    for (const killRepeat of [true, false]) {
+      for (const killOmit4 of [true, false]) {
+        variants.push({
+          tier1Range: range,
+          tier2KillRepeat: killRepeat,
+          tier3KillOmit4: killOmit4,
+          tier4Strict: true, // 严格不杀危险区间
+        });
+      }
     }
   }
 
-  // 第二阶段：几个有代表性的均衡组合
-  variants.push({ hotCold: 0.20, repeat: 0.15, limit: 0.15, omit: 0.15, headTail: 0.10, neighbor: 0.10, sum: 0.15 });
-  variants.push({ hotCold: 0.15, repeat: 0.25, limit: 0.20, omit: 0.10, headTail: 0.05, neighbor: 0.10, sum: 0.15 });
-  variants.push({ hotCold: 0.30, repeat: 0.10, limit: 0.10, omit: 0.10, headTail: 0.10, neighbor: 0.10, sum: 0.20 });
-  variants.push({ hotCold: 0.10, repeat: 0.30, limit: 0.10, omit: 0.10, headTail: 0.10, neighbor: 0.15, sum: 0.15 });
-
   const totalTests = variants.length;
+  const history: BacktestResult["history"] = [];
+  let bestRate = -1;
+  let bestFail = 999;
+  let bestTiers: OmitTierConfig = current.omitTiers ?? DEFAULT_OMIT_TIERS;
+  let tested = 0;
 
   for (const v of variants) {
-    // 归一化
-    const raw = KEYS.map((k) => v[k] ?? 0.14);
-    const sum = raw.reduce((a, b) => a + b, 0);
-    const normed: Partial<AnalyzerOptions["weights"]> = {};
-    for (let i = 0; i < KEYS.length; i++) {
-      normed[KEYS[i]] = Math.round((raw[i] / sum) * 100) / 100;
-    }
-
-    const opts: AnalyzerOptions = { ...current, weights: normed as AnalyzerOptions["weights"] };
-    const rate = runBacktest(sorted, opts, startIdx);
+    const opts: AnalyzerOptions = { ...current, omitTiers: v };
+    const { rate, maxFail } = runBacktestDetailed(sorted, opts, startIdx);
 
     tested++;
-    history.push({ weights: KEYS.map((k) => normed[k]!), hitRate: rate });
+    history.push({ tiers: v, hitRate: rate, maxFail });
 
-    if (rate > bestRate) {
+    // 优先选杀对率高的，杀对率相同时选连不中少的
+    if (rate > bestRate || (rate === bestRate && maxFail < bestFail)) {
       bestRate = rate;
-      bestWeights = normed as AnalyzerOptions["weights"];
+      bestFail = maxFail;
+      bestTiers = v;
     }
 
     if (progress) progress(tested, totalTests);
   }
 
   return {
-    bestOptions: { ...current, weights: bestWeights },
+    bestOptions: { ...current, omitTiers: bestTiers },
     bestHitRate: Math.round(bestRate * 10000) / 10000,
     totalTests,
     tested,
@@ -1228,31 +1229,46 @@ export function backtestAndOptimize(
   };
 }
 
-/** 对单组权重跑回测，返回命中率 */
+/** 跑前向验证，返回 {杀对率, 最长连不中} */
+function runBacktestDetailed(
+  sorted: LotteryRecord[],
+  opts: AnalyzerOptions,
+  startIdx: number,
+): { rate: number; maxFail: number } {
+  let correct = 0;
+  let total = 0;
+  let curFail = 0;
+  let maxFail = 0;
+
+  for (let i = startIdx; i < sorted.length; i++) {
+    const train = sorted.slice(0, i);
+    if (train.length < 15) continue;
+
+    const rec = recommend(train, opts);
+    if (rec.killNumbers.length === 0) continue;
+
+    const target = sorted[i];
+    const actualNums = new Set(target.numbers);
+    const killedRight = rec.killNumbers.filter((kn) => !actualNums.has(kn)).length;
+
+    total++;
+    if (killedRight === rec.killNumbers.length) {
+      correct++;
+      curFail = 0;
+    } else {
+      curFail++;
+      if (curFail > maxFail) maxFail = curFail;
+    }
+  }
+
+  return { rate: total > 0 ? correct / total : 0, maxFail };
+}
+
+/** 简单回测（向后兼容） */
 function runBacktest(
   sorted: LotteryRecord[],
   opts: AnalyzerOptions,
   startIdx: number,
 ): number {
-  let correct = 0;
-  let total = 0;
-
-  for (let i = startIdx; i < sorted.length - 1; i++) {
-    const train = sorted.slice(0, i + 1);
-    const target = sorted[i + 1];
-    const actualNums = new Set(target.numbers);
-
-    if (train.length < 10) continue;
-
-    const rec = recommend(train, opts);
-    if (rec.killNumbers.length === 0) continue;
-
-    // 杀号正确 = 被杀号码没在开奖里
-    const killedRight = rec.killNumbers.filter((kn) => !actualNums.has(kn)).length;
-    // 2个杀号全对才算命中（严格模式）
-    if (killedRight === rec.killNumbers.length) correct++;
-    total++;
-  }
-
-  return total > 0 ? correct / total : 0;
+  return runBacktestDetailed(sorted, opts, startIdx).rate;
 }
