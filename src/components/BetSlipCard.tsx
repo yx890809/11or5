@@ -16,7 +16,7 @@ export default function BetSlipCard({ killNumbers }: Props) {
 
   const handleCopy = async () => {
     if (!slip) return;
-    const text = slip.map(row => row.join(" ")).join("\n");
+    const text = slip.map(row => row.map(n => n.toString().padStart(2, "0")).join(" ")).join("\n");
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
