@@ -213,7 +213,7 @@ export default function DashboardPage() {
 
       {/* 1. 顶部：杀号推荐卡 + 命中率卡 并排 */}
       <div className="mb-4 grid grid-cols-1 gap-6 xl:grid-cols-[2fr_1fr]">
-        <KillCard recommendation={recommendation} stats={stats} />
+        <KillCard recommendation={recommendation} stats={stats} records={records} />
         <HitRateCard />
       </div>
 

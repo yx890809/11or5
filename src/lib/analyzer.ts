@@ -710,7 +710,58 @@ export function autoAdjustWeights(
 }
 
 /**
- * AI 策略进化引擎 - 网格搜索最优权重组合
+ * 快速回测：用最近 N 期数据对比三种策略的杀 2 命中率
+ * ① 共识投票制（当前 consensusMin=3）
+ * ② 纯加权求和（退化为 consensusMin=1，等于关闭共识过滤）
+ * ③ 纯随机（理论基线 27.3%）
+ */
+export function quickBacktest(records: LotteryRecord[], testCount = 20): {
+  consensus: { hits: number; rate: number };
+  weighted: { hits: number; rate: number };
+  random: { hits: number; rate: number };
+  total: number;
+} {
+  const sorted = sortRecords(records);
+  const MIN_TRAIN = 15;
+  const total = Math.min(testCount, Math.max(0, sorted.length - MIN_TRAIN));
+  if (total === 0) {
+    return { consensus: { hits: 0, rate: 0 }, weighted: { hits: 0, rate: 0 }, random: { hits: 0, rate: 0 }, total: 0 };
+  }
+
+  let consensusHits = 0;
+  let weightedHits = 0;
+  let randomHits = 0;
+
+  const consensusOpts: AnalyzerOptions = { ...DEFAULT_OPTIONS, killCount: 2, consensusMin: 3 };
+  const weightedOpts: AnalyzerOptions = { ...DEFAULT_OPTIONS, killCount: 2, consensusMin: 1 };
+
+  for (let i = sorted.length - total; i < sorted.length; i++) {
+    const train = sorted.slice(0, i);
+    const testRecord = sorted[i];
+    if (train.length < MIN_TRAIN) continue;
+
+    const actual = testRecord.numbers;
+
+    const c = recommend(train, consensusOpts);
+    if (c.killNumbers.every((n) => !actual.includes(n))) consensusHits++;
+
+    const w = recommend(train, weightedOpts);
+    if (w.killNumbers.every((n) => !actual.includes(n))) weightedHits++;
+
+    const pool = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+    const shuffle = pool.sort(() => Math.random() - 0.5).slice(0, 2);
+    if (shuffle.every((n) => !actual.includes(n))) randomHits++;
+  }
+
+  return {
+    consensus: { hits: consensusHits, rate: consensusHits / total },
+    weighted: { hits: weightedHits, rate: weightedHits / total },
+    random: { hits: randomHits, rate: randomHits / total },
+    total,
+  };
+}
+
+/** - 网格搜索最优权重组合
  * 用历史开奖数据做回测，找出使预测命中率最高的权重组合
  * 返回最优配置和回测命中率
  */

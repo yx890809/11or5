@@ -1,25 +1,33 @@
 // 杀号推荐卡
-import { Crosshair, Flame, Snowflake, TrendingUp } from "lucide-react";
-import type { KillRecommendation, NumberStat, AnalyzerOptions } from "@/types";
+import { Crosshair, Flame, Snowflake, TrendingUp, BarChart3 } from "lucide-react";
+import { useMemo } from "react";
+import type { KillRecommendation, NumberStat, AnalyzerOptions, LotteryRecord } from "@/types";
+import { quickBacktest } from "@/lib/analyzer";
 import Ball from "./Ball";
 
 interface Props {
   recommendation: KillRecommendation;
   stats: NumberStat[];
   options?: AnalyzerOptions;
+  records?: LotteryRecord[];
 }
 
 /** 杀 N 个号的理论随机正确率 */
 function killSuccessRate(n: number): string {
-  // 每期开5个，随机杀N个号全不中的概率 = C(11-N,5)/C(11,5)
   const total = 462; // C(11,5)
   const okMap: Record<number, number> = { 1: 252, 2: 126, 3: 56, 4: 21, 5: 6 };
   const ok = okMap[n] ?? 0;
   return ((ok / total) * 100).toFixed(1);
 }
 
-export default function KillCard({ recommendation, stats, options }: Props) {
+export default function KillCard({ recommendation, stats, options, records }: Props) {
   const { killNumbers, details } = recommendation;
+
+  // 跑快速回测对比三种策略
+  const bt = useMemo(() => {
+    if (!records || records.length < 20) return null;
+    return quickBacktest(records, 20);
+  }, [records]);
   const killDetails = killNumbers
     .map((n) => details.find((d) => d.num === n))
     .filter(Boolean) as NonNullable<(typeof details)[number]>[];
@@ -93,6 +101,32 @@ export default function KillCard({ recommendation, stats, options }: Props) {
           );
         })}
       </div>
+
+      {/* 策略回测对比 */}
+      {bt && bt.total > 0 && (
+        <div className="border-t border-white/5 px-4 py-2">
+          <div className="mb-1.5 flex items-center gap-1 text-[10px] text-slate-500">
+            <BarChart3 className="h-3 w-3" />
+            近 {bt.total} 期回测：共识 vs 加权 vs 随机基线
+          </div>
+          <div className="flex items-center gap-3 text-[11px]">
+            <span className={`font-mono ${bt.consensus.rate >= bt.random.rate ? "text-green-400" : "text-red-400"}`}>
+              共识制 {(bt.consensus.rate * 100).toFixed(0)}% ({bt.consensus.hits}/{bt.total})
+            </span>
+            <span className="text-slate-600">|</span>
+            <span className={`font-mono ${bt.weighted.rate >= bt.random.rate ? "text-green-400" : "text-red-400"}`}>
+              加权制 {(bt.weighted.rate * 100).toFixed(0)}% ({bt.weighted.hits}/{bt.total})
+            </span>
+            <span className="text-slate-600">|</span>
+            <span className="font-mono text-slate-500">随机 {killSuccessRate(killNumbers.length)}%</span>
+          </div>
+          {bt.consensus.rate < 0.27 && bt.weighted.rate < 0.27 && (
+            <div className="mt-1 text-[10px] text-red-400">
+              ⚠️ 两种算法都低于随机基线，当前参数配置在反向预测！
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
