@@ -14,14 +14,14 @@ import type {
 export const DEFAULT_OPTIONS: AnalyzerOptions = {
   window: 30,
   killCount: 2,        // 固定杀2个号
-  consensusMin: 3,     // 至少3种方法同时指向才杀（宁缺毋滥）
+  consensusMin: 2,     // 至少2种方法同时指向（门槛降低，因为有效方法少了）
   weights: {
-    hotCold: 0.25,
-    limit: 0.15,
+    hotCold: 0.30,     // 冷号（只杀极端冷，方向已修正）
+    limit: 0.15,       // 刚开始冷的号
     headTail: 0.10,
-    omit: 0.10,
-    repeat: 0.20,
-    neighbor: 0.10,
+    omit: 0.20,        // 极端遗漏
+    repeat: 0.00,      // 废弃：重号不能杀，反向给惩罚分
+    neighbor: 0.15,    // 孤立号
     sum: 0.10,
   },
 };
@@ -179,25 +179,23 @@ export function scoreNumbers(
   const details: ScoreDetail[] = stats.map((s) => {
     const methods: string[] = [];
 
-    // 冷热分：最热(频次最高) 与 最冷(遗漏最长) 取大者，极端者得高分
-    const freqPart = norm01(s.freq, minFreq, maxFreq); // 越热越高
-    const omitPart = s.currentOmit / maxOmit; // 越冷越高
-    const hotRaw = Math.max(freqPart, omitPart);
-    const hotScore = Math.round(hotRaw * 100 * options.weights.hotCold);
-    if (hotRaw >= 0.75) methods.push("冷热法");
+    // 冷热法（方向修正：只杀极端冷且未回补的号，不杀热号！）
+    // 热号下期有 ~75% 概率继续出，绝对不能杀！
+    const omitPart = s.currentOmit / Math.max(1, maxOmit); // 越冷越高（当前遗漏占历史最大遗漏比例）
+    const coldRaw = omitPart >= 0.9 ? 1 : omitPart >= 0.75 ? 0.6 : omitPart >= 0.6 ? 0.3 : 0;
+    const coldScore = Math.round(coldRaw * 100 * options.weights.hotCold);
+    if (coldRaw >= 0.6) methods.push("冷热法");
 
-    // 极限分：连开 >= 3 期（11选5每期5个号，同一号连中3期已属罕见）
+    // 极限法（方向修正：不杀连开号！改为杀"刚开始冷"的号）
+    // 连开3+期的号下期反而有延续性；刚断连开的号（遗漏1-3期）可能继续冷
     let limitRaw = 0;
-    if (s.consecutive >= 4) {
-      limitRaw = 1;
-      methods.push("极限法");
-    } else if (s.consecutive >= 3) {
+    if (s.consecutive === 0 && s.currentOmit >= 1 && s.currentOmit <= 3) {
       limitRaw = 0.6;
       methods.push("极限法");
     }
     const limitScore = Math.round(limitRaw * 100 * options.weights.limit);
 
-    // 首尾差分
+    // 首尾差法（形态逻辑，保留）
     let htRaw = 0;
     if (headTailActive && s.num === headTailDiff) {
       htRaw = 1;
@@ -205,7 +203,7 @@ export function scoreNumbers(
     }
     const headTailScore = Math.round(htRaw * 100 * options.weights.headTail);
 
-    // 遗漏值分：当前遗漏 >= 历史90% 视为极端冷态可杀
+    // 遗漏值法（保留：当前遗漏 >= 历史90%，极端冷）
     let omitRaw = 0;
     if (s.maxOmit > 0 && s.currentOmit >= s.maxOmit * 0.9) {
       omitRaw = 1;
@@ -215,18 +213,13 @@ export function scoreNumbers(
     }
     const omitScore = Math.round(omitRaw * 100 * options.weights.omit);
 
-    // 重号杀号：连续 3 期以上每期都开出的号码，下期大概率不再重
-    let repeatRaw = 0;
-    if (s.repeatStreak >= 4) {
-      repeatRaw = 1;
-      methods.push("重号法");
-    } else if (s.repeatStreak >= 3) {
-      repeatRaw = 0.7;
-      methods.push("重号法");
-    }
-    const repeatScore = Math.round(repeatRaw * 100 * options.weights.repeat);
+    // 重号杀号（已改！原来方向完全反了）
+    // 11选5 重号率 ≈ 75%！上期出现的5个号平均有3.75个会再出现
+    // 所以重号法不再杀号，而是反过来 — 对"上期出现的号"给惩罚分（降低被杀可能性）
+    // 这里 score 不加分，methods 也不标记"重号法"，因为重号法本来就不该存在
+    const repeatScore = 0;
 
-    // 邻号远离杀号：距离上期所有号码差距都 >= 3（即号码周围3格内都没上期开奖号）
+    // 邻号远离法（保留：距离上期所有号码差距都 >= 3 的孤立号，不太可能出）
     let neighborRaw = 0;
     if (lastNums.length > 0) {
       const minDist = Math.min(...lastNums.map((n) => Math.abs(s.num - n)));
@@ -240,7 +233,7 @@ export function scoreNumbers(
     }
     const neighborScore = Math.round(neighborRaw * 100 * options.weights.neighbor);
 
-    // 和值极值杀号：最近3期和值偏大 → 杀大号；偏小 → 杀小号
+    // 和值极值法（保留：最近3期和值极端 → 可能有方向但弱）
     let sumRaw = 0;
     if (sumIsExtreme) {
       if (sumDirection === "high" && s.num >= 9) {
@@ -253,13 +246,19 @@ export function scoreNumbers(
     }
     const sumScore = Math.round(sumRaw * 100 * options.weights.sum);
 
-    const score = hotScore + limitScore + headTailScore + omitScore + repeatScore + neighborScore + sumScore;
+    let score = coldScore + limitScore + headTailScore + omitScore + repeatScore + neighborScore + sumScore;
+
+    // ⚠️ 重号保护：上期出现的号码，被杀概率砍半
+    // 上期5个号平均75%概率下期继续出，绝对不能杀！
+    if (lastNums.includes(s.num)) {
+      score = Math.round(score * 0.3); // 惩罚系数0.3，大幅降低但不完全杜绝
+    }
 
     return {
       num: s.num,
       score,
       methods: Array.from(new Set(methods)),
-      hotScore,
+      hotScore: coldScore, // 兼容字段
       limitScore,
       headTailScore,
       omitScore,
