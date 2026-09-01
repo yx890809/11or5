@@ -179,23 +179,30 @@ export function scoreNumbers(
   const details: ScoreDetail[] = stats.map((s) => {
     const methods: string[] = [];
 
-    // 冷热法（方向修正：只杀极端冷且未回补的号，不杀热号！）
-    // 热号下期有 ~75% 概率继续出，绝对不能杀！
-    const omitPart = s.currentOmit / Math.max(1, maxOmit); // 越冷越高（当前遗漏占历史最大遗漏比例）
-    const coldRaw = omitPart >= 0.9 ? 1 : omitPart >= 0.75 ? 0.6 : omitPart >= 0.6 ? 0.3 : 0;
-    const coldScore = Math.round(coldRaw * 100 * options.weights.hotCold);
-    if (coldRaw >= 0.6) methods.push("冷热法");
+    // ═══════════════════════════════════════════
+    // 7 种杀号方法（方向已修正：只杀"下期不太可能出"的号）
+    // 每种方法覆盖 3-5 个号，让每个号能被 2-4 种方法同时命中
+    // ═══════════════════════════════════════════
 
-    // 极限法（方向修正：不杀连开号！改为杀"刚开始冷"的号）
-    // 连开3+期的号下期反而有延续性；刚断连开的号（遗漏1-3期）可能继续冷
+    // 1. 冷热法（只杀冷，不杀热！热号 75% 概率继续出）
+    // 门槛放宽到 60%（原来 75% 太严），覆盖 3-4 个冷号
+    const omitPart = s.currentOmit / Math.max(1, maxOmit);
+    let coldRaw = 0;
+    if (omitPart >= 0.85) coldRaw = 1;
+    else if (omitPart >= 0.7) coldRaw = 0.7;
+    else if (omitPart >= 0.55) coldRaw = 0.4;
+    const coldScore = Math.round(coldRaw * 100 * options.weights.hotCold);
+    if (coldRaw >= 0.4) methods.push("冷热法");
+
+    // 2. 极限法（杀"刚断连开+遗漏≤4期"的号 — 热完变冷中）
     let limitRaw = 0;
-    if (s.consecutive === 0 && s.currentOmit >= 1 && s.currentOmit <= 3) {
-      limitRaw = 0.6;
+    if (s.consecutive === 0 && s.currentOmit >= 1 && s.currentOmit <= 4) {
+      limitRaw = s.currentOmit <= 2 ? 0.8 : 0.5;
       methods.push("极限法");
     }
     const limitScore = Math.round(limitRaw * 100 * options.weights.limit);
 
-    // 首尾差法（形态逻辑，保留）
+    // 3. 首尾差法（上期首尾球相减 → 杀这个数 — 形态逻辑）
     let htRaw = 0;
     if (headTailActive && s.num === headTailDiff) {
       htRaw = 1;
@@ -203,23 +210,40 @@ export function scoreNumbers(
     }
     const headTailScore = Math.round(htRaw * 100 * options.weights.headTail);
 
-    // 遗漏值法（保留：当前遗漏 >= 历史90%，极端冷）
+    // 4. 遗漏值法（当前遗漏排名靠前列的号）
+    // 门槛放宽到 0.7（原来 0.9 几乎只有 1 个号），覆盖 3-4 个
     let omitRaw = 0;
-    if (s.maxOmit > 0 && s.currentOmit >= s.maxOmit * 0.9) {
+    if (s.maxOmit > 0 && s.currentOmit >= s.maxOmit * 0.85) {
       omitRaw = 1;
       methods.push("遗漏法");
     } else if (s.maxOmit > 0 && s.currentOmit >= s.maxOmit * 0.7) {
-      omitRaw = 0.5;
+      omitRaw = 0.6;
+      methods.push("遗漏法");
+    } else if (s.maxOmit > 0 && s.currentOmit >= s.maxOmit * 0.55) {
+      omitRaw = 0.3;
     }
     const omitScore = Math.round(omitRaw * 100 * options.weights.omit);
 
-    // 重号杀号（已改！原来方向完全反了）
-    // 11选5 重号率 ≈ 75%！上期出现的5个号平均有3.75个会再出现
-    // 所以重号法不再杀号，而是反过来 — 对"上期出现的号"给惩罚分（降低被杀可能性）
-    // 这里 score 不加分，methods 也不标记"重号法"，因为重号法本来就不该存在
-    const repeatScore = 0;
+    // 5. 重号反向排除（原来的重号杀号完全反了！现在改成：
+    //    上期 5 个号有 75% 概率继续出，所以"不在上期开奖里"的 6 个号中排遗漏靠前者 → 杀）
+    //    注意：不是真的"重号法"，而是"非重号反向杀"
+    let repeatRaw = 0;
+    if (!lastNums.includes(s.num)) {
+      // 不在上期 → 有资格被杀
+      // 在非重号中，遗漏值越高越冷越可能继续不出
+      const nonRepeatOmitRank = stats
+        .filter((x) => !lastNums.includes(x.num))
+        .sort((a, b) => b.currentOmit - a.currentOmit)
+        .findIndex((x) => x.num === s.num);
+      if (nonRepeatOmitRank >= 0 && nonRepeatOmitRank <= 2) {
+        // 非重号中遗漏排名前 3
+        repeatRaw = nonRepeatOmitRank === 0 ? 0.9 : nonRepeatOmitRank === 1 ? 0.6 : 0.4;
+        methods.push("重号排除法");
+      }
+    }
+    const repeatScore = Math.round(repeatRaw * 100 * 0.15); // 用固定权重 0.15，不依赖 options.weights.repeat（已废弃）
 
-    // 邻号远离法（保留：距离上期所有号码差距都 >= 3 的孤立号，不太可能出）
+    // 6. 邻号远离法（门槛从 minDist≥3 降到 ≥2，覆盖更多孤立号）
     let neighborRaw = 0;
     if (lastNums.length > 0) {
       const minDist = Math.min(...lastNums.map((n) => Math.abs(s.num - n)));
@@ -227,13 +251,13 @@ export function scoreNumbers(
         neighborRaw = 1;
         methods.push("邻号法");
       } else if (minDist === 2) {
-        neighborRaw = 0.5;
+        neighborRaw = 0.6;
         methods.push("邻号法");
       }
     }
     const neighborScore = Math.round(neighborRaw * 100 * options.weights.neighbor);
 
-    // 和值极值法（保留：最近3期和值极端 → 可能有方向但弱）
+    // 7. 和值极值法（最近 3 期和值极端 → 杀对应区间）
     let sumRaw = 0;
     if (sumIsExtreme) {
       if (sumDirection === "high" && s.num >= 9) {
@@ -249,16 +273,15 @@ export function scoreNumbers(
     let score = coldScore + limitScore + headTailScore + omitScore + repeatScore + neighborScore + sumScore;
 
     // ⚠️ 重号保护：上期出现的号码，被杀概率砍半
-    // 上期5个号平均75%概率下期继续出，绝对不能杀！
     if (lastNums.includes(s.num)) {
-      score = Math.round(score * 0.3); // 惩罚系数0.3，大幅降低但不完全杜绝
+      score = Math.round(score * 0.3);
     }
 
     return {
       num: s.num,
       score,
       methods: Array.from(new Set(methods)),
-      hotScore: coldScore, // 兼容字段
+      hotScore: coldScore,
       limitScore,
       headTailScore,
       omitScore,
