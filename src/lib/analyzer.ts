@@ -772,6 +772,77 @@ export interface BacktestResult {
   history: Array<{ weights: number[]; hitRate: number }>;
 }
 
+/**
+ * 定位胆快速回测：用最近 N 期数据测试定胆命中率
+ * 胆码命中率 = 推荐胆码中命中当期开奖号的比例
+ * 比如定2个胆，当期开出了其中1个 → 命中率50%
+ * 也统计"全中"（所有胆码都在开奖里）和"命中≥1"（至少中1个）
+ */
+export function quickBacktestDan(
+  records: LotteryRecord[],
+  danCount = 2,
+  window = 30,
+  testCount = 20,
+): {
+  avgHitRate: number;        // 平均单胆命中率 (0-1)
+  fullHitRate: number;       // 全中率 (所有胆码都在开奖里)
+  anyHitRate: number;        // 至少中1个的概率
+  total: number;
+  details: Array<{
+    issue: string;
+    danNumbers: number[];
+    actual: number[];
+    hits: number[];           // 命中的胆码
+    hitRate: number;          // 本期命中率
+  }>;
+} {
+  const sorted = sortRecords(records);
+  const MIN_TRAIN = 15;
+  const total = Math.min(testCount, Math.max(0, sorted.length - MIN_TRAIN));
+
+  const details: Array<{
+    issue: string; danNumbers: number[]; actual: number[]; hits: number[]; hitRate: number;
+  }> = [];
+
+  let hitRateSum = 0;
+  let fullHit = 0;
+  let anyHit = 0;
+
+  for (let i = sorted.length - total; i < sorted.length; i++) {
+    const train = sorted.slice(0, i);
+    const testRecord = sorted[i];
+    if (train.length < MIN_TRAIN) continue;
+
+    const rec = recommendDan(train, danCount, window);
+    const actual = testRecord.numbers;
+    const hits = rec.danNumbers.filter((n) => actual.includes(n));
+    const hitRate = hits.length / danCount;
+    hitRateSum += hitRate;
+    if (hits.length === danCount) fullHit++;
+    if (hits.length >= 1) anyHit++;
+
+    details.push({
+      issue: testRecord.issue,
+      danNumbers: rec.danNumbers,
+      actual,
+      hits,
+      hitRate,
+    });
+  }
+
+  return {
+    avgHitRate: total > 0 ? hitRateSum / total : 0,
+    fullHitRate: total > 0 ? fullHit / total : 0,
+    anyHitRate: total > 0 ? anyHit / total : 0,
+    total,
+    details,
+  };
+}
+
+/**
+ * AI 策略进化引擎
+ * 用网格搜索遍历权重组合，回测选出最优
+ */
 export function backtestAndOptimize(
   records: LotteryRecord[],
   current: AnalyzerOptions,

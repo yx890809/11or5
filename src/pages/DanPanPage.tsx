@@ -1,9 +1,9 @@
 // 定位胆分析看板
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Database, Target, Settings, Sparkles } from "lucide-react";
+import { Database, Target, Settings, Sparkles, History, TrendingUp } from "lucide-react";
 import { useLotteryStore } from "@/store";
-import { computeStats, recommendDan } from "@/lib/analyzer";
+import { computeStats, recommendDan, quickBacktestDan } from "@/lib/analyzer";
 import { DAN_METHOD_LIST } from "@/types";
 
 export default function DanPanPage() {
@@ -15,6 +15,12 @@ export default function DanPanPage() {
   const sortedRecords = useMemo(() => [...records].slice(-window), [records, window]);
   const stats = useMemo(() => computeStats(records, window), [records, window]);
   const result = useMemo(() => recommendDan(records, danCount, window), [records, danCount, window]);
+
+  // 定胆历史回测
+  const bt = useMemo(
+    () => quickBacktestDan(records, danCount, window, 20),
+    [records, danCount, window],
+  );
 
   if (!result || result.danNumbers.length === 0) {
     return (
@@ -277,6 +283,137 @@ export default function DanPanPage() {
           </div>
         </div>
       </div>
+
+      {/* 历史定胆命中率 */}
+      {bt.total > 0 && (
+        <div className="panel mt-6">
+          <div className="panel-header justify-between">
+            <span className="flex items-center gap-2">
+              <History className="h-4 w-4 text-gold-300" /> 历史定胆命中率
+            </span>
+            <span className="text-xs text-slate-500">近 {bt.total} 期回测 · 定 {danCount} 个胆</span>
+          </div>
+
+          {/* 三个统计卡片 */}
+          <div className="grid grid-cols-3 gap-4 border-b border-white/5 p-4">
+            <div className="rounded-lg border border-white/5 bg-white/[0.02] p-3 text-center">
+              <div className="flex items-center justify-center gap-1 text-xs text-slate-400">
+                <TrendingUp className="h-3 w-3" /> 平均单胆命中率
+              </div>
+              <div className={`mt-1 font-mono text-2xl font-bold ${
+                bt.avgHitRate >= 0.4 ? "text-green-400" : bt.avgHitRate >= 0.25 ? "text-amber-400" : "text-red-400"
+              }`}>
+                {(bt.avgHitRate * 100).toFixed(1)}%
+              </div>
+              <div className="mt-0.5 text-[10px] text-slate-500">
+                {(bt.avgHitRate * danCount).toFixed(1)}/{danCount} 个胆命中
+              </div>
+            </div>
+            <div className="rounded-lg border border-white/5 bg-white/[0.02] p-3 text-center">
+              <div className="text-xs text-slate-400">至少中 1 个</div>
+              <div className={`mt-1 font-mono text-2xl font-bold ${
+                bt.anyHitRate >= 0.6 ? "text-green-400" : bt.anyHitRate >= 0.4 ? "text-amber-400" : "text-red-400"
+              }`}>
+                {(bt.anyHitRate * 100).toFixed(1)}%
+              </div>
+              <div className="mt-0.5 text-[10px] text-slate-500">
+                {Math.round(bt.anyHitRate * bt.total)}/{bt.total} 期
+              </div>
+            </div>
+            <div className="rounded-lg border border-white/5 bg-white/[0.02] p-3 text-center">
+              <div className="text-xs text-slate-400">全中（所有胆码）</div>
+              <div className={`mt-1 font-mono text-2xl font-bold ${
+                bt.fullHitRate >= 0.3 ? "text-green-400" : bt.fullHitRate >= 0.15 ? "text-amber-400" : "text-red-400"
+              }`}>
+                {(bt.fullHitRate * 100).toFixed(1)}%
+              </div>
+              <div className="mt-0.5 text-[10px] text-slate-500">
+                {Math.round(bt.fullHitRate * bt.total)}/{bt.total} 期
+              </div>
+            </div>
+          </div>
+
+          {/* 每期明细 */}
+          <div className="max-h-[280px] overflow-auto">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-void-800">
+                <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500">
+                  <th className="px-4 py-2 font-medium">期号</th>
+                  <th className="px-4 py-2 font-medium">推荐胆码</th>
+                  <th className="px-4 py-2 font-medium">开奖号码</th>
+                  <th className="px-4 py-2 font-medium">结果</th>
+                  <th className="px-4 py-2 font-medium">命中率</th>
+                </tr>
+              </thead>
+              <tbody className="font-mono">
+                {bt.details.slice().reverse().map((d) => {
+                  const isFullHit = d.hits.length === danCount;
+                  const isAnyHit = d.hits.length >= 1;
+                  return (
+                    <tr key={d.issue} className="border-t border-white/5 hover:bg-white/[0.02]">
+                      <td className="px-4 py-2 text-xs text-slate-400">{d.issue}</td>
+                      <td className="px-4 py-2">
+                        <div className="flex gap-1">
+                          {d.danNumbers.map((n) => (
+                            <span
+                              key={n}
+                              className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
+                                d.hits.includes(n)
+                                  ? "bg-green-400/20 text-green-300 ring-1 ring-green-400/40"
+                                  : "bg-red-400/10 text-red-300 ring-1 ring-red-400/30"
+                              }`}
+                            >
+                              {String(n).padStart(2, "0")}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2">
+                        <div className="flex gap-1">
+                          {d.actual.map((n) => (
+                            <span
+                              key={n}
+                              className={`flex h-6 w-6 items-center justify-center rounded-full text-xs ${
+                                d.danNumbers.includes(n)
+                                  ? "bg-green-400/20 text-green-300 font-bold ring-1 ring-green-400/40"
+                                  : "bg-white/5 text-slate-400"
+                              }`}
+                            >
+                              {String(n).padStart(2, "0")}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2">
+                        <span
+                          className={`rounded px-2 py-0.5 text-[11px] ${
+                            isFullHit
+                              ? "bg-green-400/15 text-green-300 ring-1 ring-green-400/40"
+                              : isAnyHit
+                              ? "bg-amber-400/15 text-amber-300 ring-1 ring-amber-400/40"
+                              : "bg-red-400/10 text-red-400 ring-1 ring-red-400/30"
+                          }`}
+                        >
+                          {isFullHit ? "全中" : isAnyHit ? `中${d.hits.length}个` : "未中"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        <span
+                          className={`font-bold ${
+                            d.hitRate >= 0.5 ? "text-green-400" : d.hitRate > 0 ? "text-amber-400" : "text-red-400"
+                          }`}
+                        >
+                          {(d.hitRate * 100).toFixed(0)}%
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
