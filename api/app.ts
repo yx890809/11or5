@@ -65,9 +65,10 @@ if (existsSync(distPath)) {
  * error handler middleware
  */
 app.use((error: Error, req: Request, res: Response, next: NextFunction) => {
+  console.error('[Express Error]', error.message, '\n', error.stack)
   res.status(500).json({
     success: false,
-    error: 'Server internal error',
+    error: process.env.NODE_ENV === 'production' ? '服务器内部错误' : error.message,
   })
 })
 

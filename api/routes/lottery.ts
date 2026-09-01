@@ -2,7 +2,7 @@
  * 开奖数据代理接口
  * 解决浏览器跨域限制，拉取外部数据链接并解析
  */
-import { Router, type Request, type Response } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 
 interface LotteryRecord {
   issue: string;
@@ -66,7 +66,7 @@ function parseJson(raw: string): LotteryRecord[] {
  * POST /api/lottery/fetch
  * body: { url, format }
  */
-router.post("/fetch", async (req: Request, res: Response): Promise<void> => {
+router.post("/fetch", async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   const { url, format } = req.body ?? {};
   if (!url || typeof url !== "string") {
     res.status(400).json({ success: false, error: "缺少 url 参数" });
@@ -75,27 +75,94 @@ router.post("/fetch", async (req: Request, res: Response): Promise<void> => {
   const fmt: "json" | "text" = format === "json" ? "json" : "text";
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15000);
-    const resp = await fetch(url, {
-      signal: controller.signal,
-      headers: { "User-Agent": "Mozilla/5.0 (LotteryAnalyzer/1.0)" },
-    });
-    clearTimeout(timer);
-    if (!resp.ok) {
-      res.status(502).json({ success: false, error: `目标返回 HTTP ${resp.status}` });
+    const timer = setTimeout(() => {
+      controller.abort();
+    }, 15000);
+
+    let fetchResp: globalThis.Response;
+    try {
+      fetchResp = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (LotteryAnalyzer/2.0)",
+          Accept: "application/json, text/plain, */*",
+        },
+        redirect: "follow",
+      });
+    } catch (fetchErr) {
+      clearTimeout(timer);
+      const msg = (fetchErr as Error).message;
+      // 区分不同错误类型
+      let hint = "";
+      if (msg.includes("aborted") || msg.includes("timeout")) hint = "（请求超时，目标服务器响应太慢）";
+      else if (msg.includes("ECONNREFUSED") || msg.includes("ENOTFOUND")) hint = "（DNS 解析失败或目标服务器不存在）";
+      else if (msg.includes("certificate") || msg.includes("SSL")) hint = "（SSL 证书错误）";
+      res.status(502).json({
+        success: false,
+        error: `无法连接到目标服务器: ${msg} ${hint}`,
+      });
       return;
     }
-    const raw = await resp.text();
+    clearTimeout(timer);
+
+    const raw = await fetchResp.text();
+
+    // 即使 HTTP 4xx/5xx 也尝试解析响应内容（有些 API 返回错误 JSON）
+    if (!fetchResp.ok) {
+      let parsed: unknown = null;
+      try { parsed = JSON.parse(raw); } catch { /* ignore */ }
+
+      // 检查目标返回的业务错误
+      if (parsed && typeof parsed === "object" && "error" in parsed) {
+        res.status(502).json({
+          success: false,
+          error: `目标返回错误 (HTTP ${fetchResp.status}): ${(parsed as { error: string }).error}`,
+          raw,
+        });
+        return;
+      }
+      if (parsed && typeof parsed === "object" && "msg" in parsed) {
+        res.status(502).json({
+          success: false,
+          error: `目标返回错误 (HTTP ${fetchResp.status}): ${(parsed as { msg: string }).msg}`,
+          raw,
+        });
+        return;
+      }
+
+      res.status(502).json({
+        success: false,
+        error: `目标返回 HTTP ${fetchResp.status} (${fetchResp.statusText})，内容: ${raw.slice(0, 200)}`,
+        raw,
+      });
+      return;
+    }
+
+    // HTTP 2xx — 尝试解析
     let data: LotteryRecord[] = [];
     try {
       data = fmt === "json" ? parseJson(raw) : parseText(raw);
-    } catch (e) {
-      res.status(200).json({ success: false, error: "解析失败", raw });
+    } catch (parseErr) {
+      res.status(200).json({
+        success: false,
+        error: `解析失败: ${(parseErr as Error).message}（格式不匹配？试试切换格式）`,
+        raw: raw.slice(0, 500),
+      });
       return;
     }
-    res.json({ success: true, data, raw });
+
+    if (data.length === 0) {
+      res.status(200).json({
+        success: false,
+        error: "解析成功但未找到有效记录（检查字段名是否匹配: issue/expect/qihao + numbers/openCode/code）",
+        raw: raw.slice(0, 500),
+      });
+      return;
+    }
+
+    res.json({ success: true, data, raw: raw.slice(0, 500) });
   } catch (e) {
-    res.status(502).json({ success: false, error: (e as Error).message || "拉取失败" });
+    next(e); // 交给全局错误处理器（开发模式会打印真实错误）
   }
 });
 
