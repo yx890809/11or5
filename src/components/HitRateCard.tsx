@@ -108,13 +108,13 @@ export default function HitRateCard({ defaultCollapsed = true }: { defaultCollap
       {!collapsed && (
         <div className="space-y-4 p-4">
           {/* 总体命中率大数字 */}
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <div className="rounded-lg border border-gold-400/20 bg-gold-400/5 p-3 text-center">
               <div className="text-2xl font-bold text-gold-300">
                 {hitRatePct ?? "--"}
                 <span className="text-sm">%</span>
               </div>
-              <div className="text-xs text-slate-500">总体命中率</div>
+              <div className="text-xs text-slate-500">近1000期命中率</div>
               <div className="mt-0.5 text-[10px] text-slate-600">{stats.totalVerified} 次验证</div>
             </div>
             <div className="rounded-lg border border-cyan-400/20 bg-cyan-400/5 p-3 text-center">
@@ -138,6 +138,44 @@ export default function HitRateCard({ defaultCollapsed = true }: { defaultCollap
               </div>
               <div className="text-xs text-slate-500">综合预期值</div>
               <div className="mt-0.5 text-[10px] text-slate-600">vs 随机基准 0.82</div>
+            </div>
+          </div>
+
+          {/* 连中 / 连挂 统计行 */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="rounded-lg border border-green-400/20 bg-green-400/5 p-3 text-center">
+              <div className={`text-2xl font-bold ${stats.currentWinStreak > 0 ? "text-green-300" : "text-slate-500"}`}>
+                {stats.totalVerified > 0 ? stats.currentWinStreak : "--"}
+                <span className="text-sm">期</span>
+              </div>
+              <div className="text-xs text-slate-500">当前连中</div>
+              <div className="mt-0.5 text-[10px] text-slate-600">
+                {stats.currentWinStreak >= 3 ? <span className="text-green-400">🔥 连中火力</span> : ""}
+              </div>
+            </div>
+            <div className="rounded-lg border border-red-400/20 bg-red-400/5 p-3 text-center">
+              <div className={`text-2xl font-bold ${stats.currentLoseStreak > 0 ? "text-red-300" : "text-slate-500"}`}>
+                {stats.totalVerified > 0 ? stats.currentLoseStreak : "--"}
+                <span className="text-sm">期</span>
+              </div>
+              <div className="text-xs text-slate-500">当前连挂</div>
+              <div className="mt-0.5 text-[10px] text-slate-600">
+                {stats.currentLoseStreak >= 3 ? <span className="text-red-400">⚠️ 警惕</span> : ""}
+              </div>
+            </div>
+            <div className="rounded-lg border border-green-400/10 bg-green-400/[0.03] p-3 text-center">
+              <div className="text-2xl font-bold text-green-200/80">
+                {stats.maxWinStreak > 0 ? stats.maxWinStreak : "--"}
+                <span className="text-sm">期</span>
+              </div>
+              <div className="text-xs text-slate-500">历史最长连中</div>
+            </div>
+            <div className="rounded-lg border border-red-400/10 bg-red-400/[0.03] p-3 text-center">
+              <div className="text-2xl font-bold text-red-200/80">
+                {stats.maxLoseStreak > 0 ? stats.maxLoseStreak : "--"}
+                <span className="text-sm">期</span>
+              </div>
+              <div className="text-xs text-slate-500">历史最长连挂</div>
             </div>
           </div>
 

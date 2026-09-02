@@ -137,7 +137,7 @@ export const useLotteryStore = create<LotteryState>((set) => ({
       const filtered = state.predictionHistory.filter(
         (p) => p.targetIssue !== item.targetIssue,
       );
-      const merged = [...filtered, item].slice(-100); // 只保留最近100条
+      const merged = [...filtered, item].slice(-1000); // 只保留最近1000条
       localStorage.setItem(LS_PRED, JSON.stringify(merged));
       return { predictionHistory: merged };
     });

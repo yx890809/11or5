@@ -910,7 +910,10 @@ export function extractFromMessyText(raw: string): LotteryRecord[] {
 
 /** 计算命中率统计 */
 export function computeHitRate(history: PredictionHistoryItem[]): HitRateStats {
-  const verified = history.filter((p) => p.hit !== undefined);
+  // 按期号升序（老→新）排序，保证 streak 计算方向一致
+  const verified = history
+    .filter((p) => p.hit !== undefined)
+    .sort((a, b) => a.targetIssue.localeCompare(b.targetIssue, "zh-Hans-CN", { numeric: true }));
   const totalVerified = verified.length;
   const totalHit = verified.filter((p) => p.hit === true).length;
   const overallHitRate = totalVerified > 0 ? totalHit / totalVerified : 0;
@@ -920,6 +923,27 @@ export function computeHitRate(history: PredictionHistoryItem[]): HitRateStats {
   const recentCount = recent.length;
   const recentHit = recent.filter((p) => p.hit === true).length;
   const recentHitRate = recentCount > 0 ? recentHit / recentCount : 0;
+
+  // 连中 / 连挂 统计（按时间从老到新）
+  let currentWinStreak = 0;
+  let currentLoseStreak = 0;
+  let maxWinStreak = 0;
+  let maxLoseStreak = 0;
+  let runningWin = 0;
+  let runningLose = 0;
+  for (const p of verified) {
+    if (p.hit === true) {
+      runningWin++;
+      runningLose = 0;
+      if (runningWin > maxWinStreak) maxWinStreak = runningWin;
+    } else {
+      runningLose++;
+      runningWin = 0;
+      if (runningLose > maxLoseStreak) maxLoseStreak = runningLose;
+    }
+  }
+  currentWinStreak = runningWin;
+  currentLoseStreak = runningLose;
 
   // 各方法单独命中率 - 优先用 methodHits（精准验证），回退到 methods+hit（旧数据）
   const perMethod: Record<string, { hit: number; total: number; rate: number }> = {};
@@ -944,7 +968,17 @@ export function computeHitRate(history: PredictionHistoryItem[]): HitRateStats {
     perMethod[k].rate = perMethod[k].total > 0 ? perMethod[k].hit / perMethod[k].total : 0;
   }
 
-  return { overallHitRate, totalVerified, perMethod, recentHitRate, recentCount };
+  return {
+    overallHitRate,
+    totalVerified,
+    perMethod,
+    recentHitRate,
+    recentCount,
+    currentWinStreak,
+    currentLoseStreak,
+    maxWinStreak,
+    maxLoseStreak,
+  };
 }
 
 /**

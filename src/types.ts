@@ -170,4 +170,12 @@ export interface HitRateStats {
   recentHitRate: number;
   /** 最近多少条 */
   recentCount: number;
+  /** 当前连中数（连续命中的期数，未中断则为最大正） */
+  currentWinStreak: number;
+  /** 当前连挂数（连续错误的期数） */
+  currentLoseStreak: number;
+  /** 历史最长连中 */
+  maxWinStreak: number;
+  /** 历史最长连挂 */
+  maxLoseStreak: number;
 }
