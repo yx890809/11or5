@@ -281,4 +281,106 @@ router.get("/builtin", async (req: Request, res: Response, next: NextFunction): 
   }
 });
 
+/**
+ * GET /api/lottery/thai11x5
+ * 泰国分分11选5（srth9u.xyz）开奖数据
+ * token 由前端 localStorage 保存，通过 x-thai-token header 透传（7天有效，过期重新抓取）
+ * 防爬请求头从真实浏览器会话逆向而来（X-Sign1 等固定可复用）
+ */
+const THAI11X5_UPSTREAM =
+  "https://www.srth9u.xyz/api/lottery/72/bonus-numbers?limit=100";
+
+const THAI11X5_HEADERS: Record<string, string> = {
+  Accept: "application/json, text/plain, */*",
+  "Content-Type": "application/vnd.sc-api.v1.json",
+  "Accept-Language": "zh-CN",
+  "Accept-Currency": "cny",
+  UUID: "d4Cy0x0aNXCIA60xDyV8",
+  Source: "1",
+  "X-Crypto": "no",
+  "X-Sign1":
+    "8f054d8a5cf6487ab9e8743cbc050b25a0bcb524d4c906bc1453756df02ad356",
+  "X-Sign1-Ts": "1788347143,lge7agi32ytfjckt7vuvkabrnb6mkpxm87l5ny1zs,1",
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+};
+
+router.get("/thai11x5", async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  const token = req.get("x-thai-token") || "";
+  if (!token) {
+    res.status(400).json({ success: false, error: "缺少凭证（x-thai-token），请先在程序里配置访问凭证" });
+    return;
+  }
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+
+    const fetchResp = await fetch(THAI11X5_UPSTREAM, {
+      signal: controller.signal,
+      headers: {
+        ...THAI11X5_HEADERS,
+        Authorization: `bearer ${token}`,
+      },
+      redirect: "follow",
+    });
+    clearTimeout(timer);
+
+    const raw = await fetchResp.text();
+    let json: { status?: number; message?: string; data?: Array<{ issue: string; code?: string; split_code?: string[] }> } = {};
+    try {
+      json = JSON.parse(raw);
+    } catch {
+      res.status(502).json({
+        success: false,
+        error: `数据源返回非 JSON（HTTP ${fetchResp.status}），可能被防护拦截或凭证失效`,
+        raw: raw.slice(0, 300),
+      });
+      return;
+    }
+
+    // 业务错误：status!=10000（如 20103 Token 无效）
+    if (json.status !== 10000) {
+      res.status(200).json({
+        success: false,
+        error: `数据源返回错误: ${json.message ?? `status=${json.status}`}${json.status === 20103 ? "（凭证已失效，请重新获取）" : ""}`,
+      });
+      return;
+    }
+
+    const list = json.data ?? [];
+    const records: LotteryRecord[] = [];
+    const seenIssues = new Set<string>();
+
+    for (const item of list) {
+      if (!item?.issue) continue;
+      if (seenIssues.has(item.issue)) continue;
+      seenIssues.add(item.issue);
+
+      // 优先 split_code 数组，回退 code 空格分隔字符串
+      let nums: number[] = [];
+      if (Array.isArray(item.split_code)) {
+        nums = sanitizeNumbers(item.split_code.map((s) => Number(s)));
+      } else if (typeof item.code === "string") {
+        nums = sanitizeNumbers(item.code.split(/\s+/).map((s) => Number(s)));
+      }
+      if (nums.length >= 2) records.push({ issue: item.issue, numbers: nums });
+    }
+
+    if (records.length === 0) {
+      res.status(200).json({ success: false, error: "解析成功但未找到有效开奖记录" });
+      return;
+    }
+
+    res.json({ success: true, data: records, source: "泰国分分11选5" });
+  } catch (e) {
+    const msg = (e as Error).message;
+    if (msg?.includes("aborted")) {
+      res.status(504).json({ success: false, error: "数据源请求超时（20s）" });
+      return;
+    }
+    next(e);
+  }
+});
+
 export default router;

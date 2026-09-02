@@ -1,10 +1,10 @@
 // 分析看板页
 import { useMemo, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { TrendingUp, Database, Sparkles, Cpu, RefreshCw } from "lucide-react";
+import { TrendingUp, Database, Sparkles, Cpu, RefreshCw, KeyRound } from "lucide-react";
 import { useLotteryStore } from "@/store";
 import { computeStats, recommend, autoAdjustWeights, backtestAndOptimize } from "@/lib/analyzer";
-import { fetchBuiltin } from "@/lib/api";
+import { fetchThai11x5, getThaiToken, setThaiToken, getThaiTokenExpiry } from "@/lib/api";
 import type { BacktestResult } from "@/lib/analyzer";
 import { METHOD_LIST } from "@/types";
 import KillCard from "@/components/KillCard";
@@ -52,6 +52,57 @@ export default function DashboardPage() {
   const [fetchLoading, setFetchLoading] = useState(false);
   const [fetchMsg, setFetchMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
+  // 泰国分分11选5凭证状态
+  const [tokenModalOpen, setTokenModalOpen] = useState(false);
+  const [tokenInput, setTokenInput] = useState("");
+  const [tokenSavedAt, setTokenSavedAt] = useState(0); // 触发重渲染显示有效期
+
+  /** 一键拉取泰国分分11选5开奖数据 */
+  const fetchLatest = async () => {
+    setFetchLoading(true);
+    setFetchMsg(null);
+    try {
+      const res = await fetchThai11x5();
+      if (!res.ok || !res.data) {
+        setFetchMsg({ type: "err", text: res.error || "拉取失败" });
+        return;
+      }
+      const existingIssues = new Set(records.map((r) => r.issue));
+      let newCount = 0;
+      for (const rec of res.data) {
+        if (!existingIssues.has(rec.issue)) {
+          appendRecord({ issue: rec.issue, numbers: rec.numbers });
+          newCount++;
+        }
+      }
+      if (newCount === 0) {
+        setFetchMsg({ type: "ok", text: `已是最新（${res.data.length} 期全部已存在）` });
+      } else {
+        setFetchMsg({ type: "ok", text: `新增 ${newCount} 期（泰国分分11选5）` });
+      }
+    } catch (e) {
+      setFetchMsg({ type: "err", text: (e as Error).message || "未知错误" });
+    } finally {
+      setFetchLoading(false);
+      setTimeout(() => setFetchMsg(null), 4000);
+    }
+  };
+
+  /** 打开凭证设置弹窗 */
+  const openTokenModal = () => {
+    setTokenInput(getThaiToken());
+    setTokenModalOpen(true);
+  };
+
+  /** 保存凭证 */
+  const saveToken = () => {
+    setThaiToken(tokenInput);
+    setTokenSavedAt(Date.now());
+    setTokenModalOpen(false);
+    setFetchMsg({ type: "ok", text: "凭证已保存" });
+    setTimeout(() => setFetchMsg(null), 3000);
+  };
+
   const runAiOptimize = () => {
     if (records.length < 15) {
       setAiError("至少需要 15 条历史数据才能启动 AI 进化");
@@ -77,39 +128,6 @@ export default function DashboardPage() {
         setAiRunning(false);
       }
     }, 50);
-  };
-
-  /** 一键拉取内置开奖源（江西11选5） */
-  const fetchLatest = async () => {
-    setFetchLoading(true);
-    setFetchMsg(null);
-    try {
-      const res = await fetchBuiltin("jx11x5");
-      if (!res.ok || !res.data) {
-        setFetchMsg({ type: "err", text: res.error || "拉取失败" });
-        return;
-      }
-      const existingIssues = new Set(records.map((r) => r.issue));
-      let newCount = 0;
-      for (const rec of res.data) {
-        if (!existingIssues.has(rec.issue)) {
-          appendRecord({ issue: rec.issue, numbers: rec.numbers });
-          newCount++;
-        }
-      }
-      // 拉到的数据是倒序（最新在前），appendRecord 内部 sortRecords 会自动排序
-      if (newCount === 0) {
-        setFetchMsg({ type: "ok", text: `已是最新（${res.data.length} 条全部已存在）` });
-      } else {
-        setFetchMsg({ type: "ok", text: `新增 ${newCount} 条开奖数据，共 ${records.length + newCount} 条` });
-      }
-    } catch (e) {
-      setFetchMsg({ type: "err", text: (e as Error).message || "未知错误" });
-    } finally {
-      setFetchLoading(false);
-      // 3 秒后自动清除提示
-      setTimeout(() => setFetchMsg(null), 3000);
-    }
   };
 
   // 自动 AI 进化：每次有新开奖数据来了，静默后台跑一次回测调权重
@@ -261,15 +279,33 @@ export default function DashboardPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {/* 一键拉取最新开奖 */}
+          {/* 一键拉取泰国分分11选5 */}
           <button
             className="btn-gold inline-flex items-center gap-1.5 text-xs"
             onClick={fetchLatest}
             disabled={fetchLoading}
-            title="从江西11选5自动拉取最新开奖数据"
+            title="从 srth9u.xyz 拉取泰国分分11选5最新开奖数据"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${fetchLoading ? "animate-spin" : ""}`} />
             {fetchLoading ? "拉取中..." : "一键拉取最新开奖"}
+          </button>
+
+          {/* 凭证设置 */}
+          <button
+            className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-2 text-xs text-slate-300 hover:bg-white/[0.06]"
+            onClick={openTokenModal}
+            title="配置泰国分分11选5数据源访问凭证"
+          >
+            <KeyRound className="h-3.5 w-3.5 text-gold-400" />
+            {(() => {
+              const tk = getThaiToken();
+              if (!tk) return "未配置";
+              const exp = getThaiTokenExpiry(tk);
+              if (!exp) return "已配置";
+              const days = (exp - Date.now()) / 86400000;
+              if (days <= 0) return "已过期";
+              return `${Math.floor(days)}天后到期`;
+            })()}
           </button>
 
           {/* 提示消息 */}
@@ -494,6 +530,67 @@ export default function DashboardPage() {
           <MethodInfo />
         </div>
       </div>
+
+      {/* 凭证设置弹窗 */}
+      {tokenModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={() => setTokenModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-lg rounded-xl border border-white/10 bg-void-900 p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center gap-2">
+              <KeyRound className="h-5 w-5 text-gold-400" />
+              <h3 className="font-display text-base font-bold text-slate-100">
+                泰国分分11选5 · 数据源凭证
+              </h3>
+            </div>
+            <div className="space-y-3 text-xs leading-relaxed text-slate-400">
+              <p>
+                粘贴登录 <span className="font-mono text-cyan-400">srth9u.xyz</span> 后的访问凭证（Token），
+                程序即可自动拉取最新开奖数据。
+              </p>
+              <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                <div className="mb-1 font-bold text-slate-300">获取方法（浏览器 F12 三步）：</div>
+                <ol className="list-decimal space-y-0.5 pl-4">
+                  <li>登录 srth9u.xyz 后按 <span className="font-mono text-cyan-400">F12</span> 打开开发者工具</li>
+                  <li>切到 <span className="font-mono text-cyan-400">Console</span>（控制台）标签</li>
+                  <li>输入 <span className="font-mono text-cyan-400 break-all">JSON.parse(localStorage.AUTH)</span> 回车，复制输出结果（含引号内全部内容）粘贴到下面</li>
+                </ol>
+              </div>
+              <textarea
+                className="h-24 w-full resize-none rounded-lg border border-white/10 bg-void-950 p-3 font-mono text-[11px] text-slate-200 outline-none focus:border-gold-400/50"
+                placeholder="eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9..."
+                value={tokenInput}
+                onChange={(e) => setTokenInput(e.target.value)}
+              />
+              {tokenInput && (() => {
+                const exp = getThaiTokenExpiry(tokenInput);
+                if (!exp) return <p className="text-amber-400">⚠ 无法识别有效期（可能不是有效凭证）</p>;
+                const days = (exp - Date.now()) / 86400000;
+                return days > 0 ? (
+                  <p className="text-green-400">✓ 凭证有效，{exp > 0 && `有效期至 ${new Date(exp).toLocaleString("zh-CN")}`}</p>
+                ) : (
+                  <p className="text-kill">✗ 凭证已过期，请重新获取</p>
+                );
+              })()}
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  className="rounded-lg border border-white/10 px-4 py-2 text-slate-300 hover:bg-white/[0.06]"
+                  onClick={() => setTokenModalOpen(false)}
+                >
+                  取消
+                </button>
+                <button className="btn-gold" onClick={saveToken} disabled={!tokenInput.trim()}>
+                  保存凭证
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

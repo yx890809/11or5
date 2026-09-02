@@ -63,6 +63,54 @@ export async function fetchBuiltin(source: string = "jx11x5"): Promise<FetchResu
   }
 }
 
+/** 泰国分分11选5凭证的 localStorage key */
+export const THAI_TOKEN_KEY = "lottery11x5:thaiToken";
+
+export function getThaiToken(): string {
+  try {
+    return localStorage.getItem(THAI_TOKEN_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+export function setThaiToken(token: string): void {
+  localStorage.setItem(THAI_TOKEN_KEY, token.trim());
+}
+
+/** 解析 JWT 的 exp 时间戳（毫秒），无效返回 null */
+export function getThaiTokenExpiry(token: string): number | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
+    if (typeof payload.exp === "number") return payload.exp * 1000;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** 泰国分分11选5拉取（后端代理到 srth9u.xyz，token 透传） */
+export async function fetchThai11x5(): Promise<FetchResult> {
+  const token = getThaiToken();
+  if (!token) {
+    return { ok: false, error: "未配置访问凭证，请先点击 🔑 按钮配置" };
+  }
+  try {
+    const resp = await fetch(`${BASE}/lottery/thai11x5`, {
+      headers: { "x-thai-token": token },
+    });
+    const json = await resp.json();
+    if (!resp.ok || !json.success) {
+      return { ok: false, error: json?.error || `HTTP ${resp.status}` };
+    }
+    return { ok: true, data: json.data };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message || "拉取泰国分分11选5失败" };
+  }
+}
+
 /** 解析原始文本 - 智能回退 */
 export function parseRaw(raw: string, format: DataFormat): LotteryRecord[] {
   try {
